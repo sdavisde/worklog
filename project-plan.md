@@ -7,11 +7,24 @@ A local-first, keyboard-driven GUI app for engineers to track their daily work, 
 ## 🧱 Tech Stack (MVP)
 
 - **UI**: Tauri + React (for better performance and smaller footprint)
+- **UI Components**: shadcn/ui with dark mode theme
+- **Styling**: Tailwind CSS v4 with CSS variables
 - **Storage**: Local CSV files only
 - **Notifications**: Native notifications (Tauri)
 - **Keybinding**: Configurable system-wide hotkey (e.g. Cmd+.)
 - **Target OS**: macOS (MVP), extendable to others
-- **Yarn**: NPM package manager
+- **Package Manager**: Yarn
+
+---
+
+## 🎨 UI/UX Design
+
+- **Theme**: Dark mode only with neutral color palette
+- **Component Library**: shadcn/ui with New York style
+- **Icons**: Lucide React icons
+- **Path Aliases**: Configured for clean imports (`@/components`, `@/lib`, etc.)
+- **Window Behavior**: Always on top, resizable, hidden by default
+- **System Tray**: Persistent tray icon with quit menu
 
 ---
 
@@ -86,12 +99,23 @@ A local-first, keyboard-driven GUI app for engineers to track their daily work, 
 worklog/
 ├─ src/
 │  ├─ components/
+│  │  └─ ui/           # shadcn/ui components
+│  ├─ lib/
+│  │  └─ utils.ts      # Utility functions
 │  ├─ views/
 │  ├─ services/
 │  ├─ utils/
-│  ├─ main.ts
-│  ├─ index.tsx
-├─ package.json
+│  ├─ App.tsx
+│  ├─ main.tsx
+│  └─ globals.css      # Dark theme CSS variables
+├─ src-tauri/
+│  ├─ src/
+│  │  ├─ main.rs       # Tauri entry point
+│  │  └─ lib.rs        # System tray & global shortcuts
+│  └─ tauri.conf.json  # Window configuration
+├─ components.json     # shadcn/ui configuration
+├─ tsconfig.json      # Path aliases configured
+└─ package.json
 ```
 
 **Data Storage**: `~/.worklog/` directory on user's machine
@@ -108,33 +132,6 @@ date,title,tags,ado_ticket,details,status
 2025-07-03,Fix OAuth bug,"bugfix|auth",ABC-123,,open
 2025-07-03,Auth redesign,"adr|architecture",,"Decouple token from session",done
 2025-07-03,Mentored intern,"mentorship",,"Explained async queue design",done
-```
-
----
-
-## 🧠 Mermaid Wireframe
-
-```mermaid
-flowchart TD
-    A[Open Worklog Prompt Cmd+.] --> B{Choose Action}
-    B --> C[Log Work]
-    B --> D[Add Task]
-    B --> E[Weekly Review]
-
-    C --> F[Input: Title]
-    C --> G[Select Tags: bugfix, feature, mentorship, etc]
-    G --> H{If feature/bugfix}
-    H --> I[Input: ADO Ticket]
-    G --> J{If mentorship/adr}
-    J --> K[Input: Insight/Details]
-    K --> L[Save to CSV]
-
-    D --> M[Input: Task Title]
-    D --> N[Select Tags & Scope]
-    N --> O[Save Task to CSV]
-
-    E --> P[Filter past 7 days from CSV]
-    P --> Q[Render Markdown Summary]
 ```
 
 ---
@@ -162,7 +159,12 @@ yarn tauri dev
 
 ## ✅ MVP Goals
 
-- [ ] System-wide global hotkey opens prompt
+- [x] System-wide global hotkey opens prompt (`Cmd+.`)
+- [x] System tray with quit functionality
+- [x] Dark mode theme implementation
+- [x] shadcn/ui component library integration
+- [x] Path aliases configured (`@/components`, `@/lib`)
+- [x] Window management (always on top, hide/show)
 - [ ] Intake modal with configurable tag selection and conditional fields
 - [ ] Task manager view
 - [ ] CSV storage for logs and tasks
