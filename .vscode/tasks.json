@@ -4,7 +4,7 @@
     {
       "label": "Tauri: Dev",
       "type": "shell",
-      "command": "npm",
+      "command": "yarn",
       "args": [
         "run",
         "tauri",
@@ -30,7 +30,7 @@
     {
       "label": "Tauri: Build",
       "type": "shell",
-      "command": "npm",
+      "command": "yarn",
       "args": [
         "run",
         "tauri",
@@ -53,7 +53,7 @@
     {
       "label": "Tauri: Clean",
       "type": "shell",
-      "command": "npm",
+      "command": "yarn",
       "args": [
         "run",
         "tauri",
@@ -76,7 +76,7 @@
     {
       "label": "Install Dependencies",
       "type": "shell",
-      "command": "npm",
+      "command": "yarn",
       "args": [
         "install"
       ],

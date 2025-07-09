@@ -11,6 +11,7 @@ A local-first, keyboard-driven GUI app for engineers to track their daily work, 
 - **Notifications**: Native notifications (Tauri)
 - **Keybinding**: Configurable system-wide hotkey (e.g. Cmd+.)
 - **Target OS**: macOS (MVP), extendable to others
+- **Yarn**: NPM package manager
 
 ---
 
