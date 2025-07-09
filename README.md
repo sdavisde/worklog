@@ -47,6 +47,20 @@ npm run tauri build
 
 Open the `.dmg` to install Worklog like any other Mac app.
 
+### 4. Enable Accessibility Permissions (Required for Global Shortcuts)
+
+**Important**: Worklog uses global shortcuts (Cmd+.) which require Accessibility permissions on macOS.
+
+1. Open **System Settings > Privacy & Security > Accessibility**
+2. Click the **+** button to add an application
+3. Navigate to and select the Worklog app:
+   - **Development**: Select the Tauri dev binary (usually in your project's `src-tauri/target/debug/` folder)
+   - **Production**: Select the installed Worklog app from Applications
+4. Make sure Worklog is checked/enabled in the Accessibility list
+5. Restart Worklog if it was already running
+
+Without these permissions, the global shortcut (Cmd+.) will not work.
+
 ---
 
 ## 🔄 Updating Worklog
