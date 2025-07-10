@@ -16,6 +16,13 @@ fn show_main_window(window: tauri::Window) {
     window.set_focus().unwrap();
 }
 
+#[tauri::command]
+fn hide_main_window(window: tauri::Window) {
+    if window.is_visible().unwrap() {
+        window.hide().unwrap();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -26,8 +33,6 @@ pub fn run() {
 
                 // Create Cmd+. shortcut
                 let cmd_dot_shortcut = Shortcut::new(Some(Modifiers::SUPER), Code::Period);
-                // Create Escape shortcut
-                let escape_shortcut = Shortcut::new(None, Code::Escape);
                 
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new().with_handler(move |_app, shortcut, event| {
@@ -49,28 +54,12 @@ pub fn run() {
                                     println!("Cmd+. Released!");
                                 }
                             }
-                        } else if shortcut == &escape_shortcut {
-                            match event.state() {
-                                ShortcutState::Pressed => {
-                                    println!("Escape Pressed!");
-                                    // Hide the main window
-                                    if let Some(window) = _app.get_webview_window("main") {
-                                        if window.is_visible().unwrap() {
-                                            window.hide().unwrap();
-                                        }
-                                    }
-                                }
-                                ShortcutState::Released => {
-                                    println!("Escape Released!");
-                                }
-                            }
                         }
                     })
                     .build(),
                 )?;
 
                 app.global_shortcut().register(cmd_dot_shortcut)?;
-                app.global_shortcut().register(escape_shortcut)?;
 
                 // Create tray menu
                 let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -94,7 +83,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, show_main_window])
+        .invoke_handler(tauri::generate_handler![greet, show_main_window, hide_main_window])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
