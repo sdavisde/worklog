@@ -1,0 +1,7 @@
+---
+description: Adding packages to the project or running scripts
+alwaysApply: false
+---
+
+- Use Yarn to install packages to the react package.json like `yarn add <package>`
+- Use Yarn when running scripts and commands to dev or build like `yarn tauri dev`

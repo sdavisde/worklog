@@ -6,6 +6,7 @@ import './globals.css'
 import App from './App'
 import { useKeybinds } from './lib/use-keybinds'
 import { invoke } from '@tauri-apps/api/core'
+import { ErrorBoundary } from './error'
 
 function GlobalKeybinds() {
   useKeybinds([
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
   {
     path: '/',
     element: <App />,
+    ErrorBoundary,
   },
 ])
 
