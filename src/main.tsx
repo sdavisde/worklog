@@ -7,6 +7,8 @@ import App from './App'
 import { useKeybinds } from './lib/use-keybinds'
 import { invoke } from '@tauri-apps/api/core'
 import { ErrorBoundary } from './error'
+import { TaskForm } from './views/TaskForm'
+import { Toaster } from './components/ui/sonner'
 
 function GlobalKeybinds() {
   useKeybinds([
@@ -26,6 +28,11 @@ const router = createBrowserRouter([
     element: <App />,
     ErrorBoundary,
   },
+  {
+    path: '/tasks/new',
+    element: <TaskForm />,
+    ErrorBoundary,
+  },
 ])
 
 const root = document.getElementById('root')!
@@ -37,6 +44,7 @@ if (!root) {
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
     <GlobalKeybinds />
+    <Toaster />
     <RouterProvider router={router} />
-  </React.StrictMode>
+  </React.StrictMode>,
 )
