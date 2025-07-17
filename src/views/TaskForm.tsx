@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { useKeybinds } from '@/lib/use-keybinds'
 import { toast } from 'sonner'
+import { invoke } from '@tauri-apps/api/core'
 
 const taskSchema = z.object({
   task: z.string().min(1, 'Task is required').max(500, 'Task must be less than 500 characters'),
@@ -17,7 +18,7 @@ type TaskFormData = z.infer<typeof taskSchema>
 
 export function TaskForm() {
   const navigate = useNavigate()
-  const taskInputRef = useRef<HTMLTextAreaElement>(null)
+  const taskFieldRef = useRef<HTMLTextAreaElement>(null)
 
   const form = useForm<TaskFormData>({
     resolver: zodResolver(taskSchema),
@@ -28,29 +29,35 @@ export function TaskForm() {
 
   // Auto-focus task input on mount
   useEffect(() => {
-    taskInputRef.current?.focus()
-  }, [])
+    console.log('setting focus on ', taskFieldRef.current)
+    setTimeout(() => taskFieldRef.current?.focus(), 500)
+  }, [taskFieldRef.current])
 
-  const onSubmit = (data: TaskFormData) => {
-    // TODO: Save task to storage
-    toast(`Added task: ${data.task}`, {
-      icon: '✅',
-    })
+  const onSubmit = async (data: TaskFormData) => {
+    try {
+      const result = await invoke<string>('save_task', { task: data.task })
+      toast(`Added task: ${data.task}`, {
+        icon: '✅',
+      })
 
-    // Reset form and stay on page for demo
-    form.reset()
-    taskInputRef.current?.focus()
-    // navigate('/')
+      // Reset form and stay on page for demo
+      form.reset()
+      form.setFocus('task')
+      // navigate('/')
+    } catch (error) {
+      console.error('Error saving task:', error)
+      toast(`Error saving task: ${error}`, {
+        icon: '❌',
+      })
+    }
   }
 
-  const handleCancel = () => {
-    navigate('/')
-  }
+  const handleCancel = () => navigate('/')
 
   // Keyboard shortcuts
   useKeybinds([
     {
-      keyMatcher: (event: KeyboardEvent) => event.key === 'Escape',
+      keyMatcher: (event: KeyboardEvent) => event.key === 'Backspace' && (event.metaKey || event.ctrlKey),
       callback: handleCancel,
     },
     {
@@ -62,16 +69,6 @@ export function TaskForm() {
       },
     },
   ])
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Shift+Enter submits form
-    if (e.key === 'Enter' && e.metaKey && e.target === taskInputRef.current) {
-      e.preventDefault()
-      if (form.formState.isValid) {
-        form.handleSubmit(onSubmit)()
-      }
-    }
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -94,10 +91,9 @@ export function TaskForm() {
                   <FormControl>
                     <Textarea
                       {...field}
-                      ref={taskInputRef}
+                      ref={taskFieldRef}
                       placeholder="Enter your task..."
                       rows={4}
-                      onKeyDown={handleKeyDown}
                     />
                   </FormControl>
                   <FormMessage />
@@ -113,7 +109,7 @@ export function TaskForm() {
                 className="flex-1"
               >
                 Cancel
-                <span className="ml-2 text-xs text-gray-500">Esc</span>
+                <span className="ml-2 text-xs text-gray-500">⌘ Backspace</span>
               </Button>
               <Button
                 type="submit"

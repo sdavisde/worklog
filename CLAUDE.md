@@ -65,8 +65,9 @@ Worklog is a Tauri-based desktop application that combines:
 ## Data Storage
 
 All data is stored locally in `~/.worklog/`:
-- `worklog.csv` - Work entries
+- `tasks.csv` - Task entries
 - `config.json` - User configuration
+- Future: `notes.csv`, etc. for other entity types
 
 ## Core Design Philosophy
 
@@ -78,6 +79,7 @@ All data is stored locally in `~/.worklog/`:
 - Submit actions should be triggered via Enter key
 - Navigation should use arrow keys where appropriate
 - All buttons and interactive elements must be keyboard accessible
+- **AUTO-FOCUS REQUIREMENT:** Every form page must auto-focus the first form element on mount using `useEffect(() => { inputRef.current?.focus() }, [])`
 
 ## Key Features
 

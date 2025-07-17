@@ -42,9 +42,9 @@ if (!root) {
 }
 
 ReactDOM.createRoot(root).render(
-  <React.StrictMode>
+  <>
     <GlobalKeybinds />
     <Toaster />
     <RouterProvider router={router} />
-  </React.StrictMode>,
+  </>,
 )

@@ -90,7 +90,10 @@ To update to the latest version:
 
 ## 🗂 Data Location
 
-All your data is stored locally in `~/.worklog/` and is preserved between updates.
+All your data is stored locally in `~/.worklog/` and is preserved between updates:
+- `tasks.csv` - Task entries with ID, timestamp, and status
+- `config.json` - User configuration settings
+- Future: Additional CSV files for notes, daily entries, etc.
 
 ---
 
@@ -130,7 +133,7 @@ npm run tauri dev
 
 The app stores all data locally in `~/.worklog/`:
 
-- `~/.worklog/worklog.csv` - Work entries
+- `~/.worklog/tasks.csv` - Task entries
 - `~/.worklog/config.json` - User configuration
 
 ## Current Status
