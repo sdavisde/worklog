@@ -5,9 +5,9 @@ use tauri::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs::{create_dir_all, OpenOptions};
-use std::io::Write;
+use std::io::{Write, Read};
 use std::path::PathBuf;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeZone};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Task {
@@ -62,6 +62,60 @@ fn save_task(task: String) -> Result<String, String> {
     ).map_err(|e| format!("Could not write CSV row: {}", e))?;
     
     Ok(format!("Task saved successfully: {}", task))
+}
+
+#[tauri::command]
+fn get_tasks() -> Result<Vec<Task>, String> {
+    let worklog_dir = get_worklog_dir()?;
+    let csv_path = worklog_dir.join("tasks.csv");
+    
+    // If CSV file doesn't exist, return empty vector
+    if !csv_path.exists() {
+        return Ok(vec![]);
+    }
+    
+    let mut file = std::fs::File::open(&csv_path)
+        .map_err(|e| format!("Could not open CSV file: {}", e))?;
+    
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| format!("Could not read CSV file: {}", e))?;
+    
+    let mut tasks = Vec::new();
+    let lines: Vec<&str> = contents.lines().collect();
+    
+    // Skip header line if it exists
+    for line in lines.iter().skip(1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        
+        // Parse CSV row (simple parsing - assumes proper format)
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 3 {
+            let id = parts[0].to_string();
+            let created_at_str = parts[1].trim_matches('"');
+            let task_description = parts[2..].join(",").trim_matches('"').to_string();
+            
+            // Parse timestamp
+            let created_at = match chrono::NaiveDateTime::parse_from_str(created_at_str, "%Y-%m-%d %H:%M:%S") {
+                Ok(naive_dt) => Local.from_local_datetime(&naive_dt).single()
+                    .unwrap_or_else(|| Local::now()),
+                Err(_) => Local::now(),
+            };
+            
+            tasks.push(Task {
+                id,
+                created_at,
+                task_description,
+            });
+        }
+    }
+    
+    // Sort by created_at descending (newest first)
+    tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    
+    Ok(tasks)
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -143,7 +197,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, show_main_window, hide_main_window, save_task])
+        .invoke_handler(tauri::generate_handler![greet, show_main_window, hide_main_window, save_task, get_tasks])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

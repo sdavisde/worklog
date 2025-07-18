@@ -14,7 +14,7 @@
       {
         "label": "main",
         "title": "Worklog",
-        "width": 800,
+        "width": 450,
         "height": 600,
         "resizable": true,
         "alwaysOnTop": true,

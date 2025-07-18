@@ -1,49 +1,43 @@
-import { useRef, useEffect } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { useKeybinds } from '@/lib/use-keybinds'
 import { toast } from 'sonner'
 import { invoke } from '@tauri-apps/api/core'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 
-const taskSchema = z.object({
-  task: z.string().min(1, 'Task is required').max(500, 'Task must be less than 500 characters'),
+const addTaskSchema = z.object({
+  task: z.string().min(1).max(500),
 })
 
-type TaskFormData = z.infer<typeof taskSchema>
+type AddTaskFormData = z.infer<typeof addTaskSchema>
 
 export function TaskForm() {
   const navigate = useNavigate()
-  const taskFieldRef = useRef<HTMLTextAreaElement>(null)
-
-  const form = useForm<TaskFormData>({
-    resolver: zodResolver(taskSchema),
+  const form = useForm<AddTaskFormData>({
     defaultValues: {
       task: '',
     },
+    resolver: zodResolver(addTaskSchema),
   })
 
   // Auto-focus task input on mount
-  useEffect(() => {
-    console.log('setting focus on ', taskFieldRef.current)
-    setTimeout(() => taskFieldRef.current?.focus(), 500)
-  }, [taskFieldRef.current])
+  useEffect(() => form.setFocus('task'), [])
 
-  const onSubmit = async (data: TaskFormData) => {
+  const handleSubmit = async (formData: AddTaskFormData) => {
     try {
-      const result = await invoke<string>('save_task', { task: data.task })
-      toast(`Added task: ${data.task}`, {
+      const result = await invoke<string>('save_task', { task: formData.task })
+      toast(`Added task: ${formData.task}`, {
         icon: '✅',
+        description: result,
       })
 
-      // Reset form and stay on page for demo
-      form.reset()
+      // Reset form and stay on page
+      form.setValue('task', '')
       form.setFocus('task')
-      // navigate('/')
     } catch (error) {
       console.error('Error saving task:', error)
       toast(`Error saving task: ${error}`, {
@@ -62,11 +56,7 @@ export function TaskForm() {
     },
     {
       keyMatcher: (event: KeyboardEvent) => event.key === 'Enter' && (event.metaKey || event.ctrlKey),
-      callback: () => {
-        if (form.formState.isValid) {
-          form.handleSubmit(onSubmit)()
-        }
-      },
+      callback: () => form.handleSubmit(handleSubmit)(),
     },
   ])
 
@@ -75,53 +65,52 @@ export function TaskForm() {
       <div className="w-full max-w-md">
         <h1 className="text-2xl font-bold mb-6 text-center">Add New Task</h1>
 
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(onSubmit)}
-            className="space-y-4"
-          >
-            <FormField
-              control={form.control}
-              name="task"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Task <span className="text-red-500">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      ref={taskFieldRef}
-                      placeholder="Enter your task..."
-                      rows={4}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+        <form
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="space-y-4"
+        >
+          <div>
+            <label
+              htmlFor="task"
+              className="block text-sm font-medium mb-2"
+            >
+              Task <span className="text-red-500">*</span>
+            </label>
+            <Textarea
+              {...form.register('task')}
+              placeholder="Enter your task..."
+              rows={4}
+              required
             />
+          </div>
 
-            <div className="flex gap-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleCancel}
-                className="flex-1"
-              >
-                Cancel
-                <span className="ml-2 text-xs text-gray-500">⌘ Backspace</span>
-              </Button>
-              <Button
-                type="submit"
-                className="flex-1"
-                disabled={!form.formState.isValid}
-              >
-                Add Task
-                <span className="ml-2 text-xs text-gray-500">⌘↵</span>
-              </Button>
-            </div>
-          </form>
-        </Form>
+          {form.formState.errors.task && <p className="text-red-500 text-sm mt-1">{form.formState.errors.task.message}</p>}
+
+          <div className="flex gap-2 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCancel}
+              className="flex-1"
+            >
+              Cancel
+              <span className="ml-2 text-xs text-gray-500">⌘⌫</span>
+            </Button>
+            <Button
+              type="submit"
+              className="flex-1"
+            >
+              Add Task
+              <span className="ml-2 text-xs text-gray-500">⌘↵</span>
+            </Button>
+          </div>
+        </form>
+
+        <div className="mt-6 text-xs text-gray-500 text-center space-y-1">
+          <p>• Press Shift+Enter to submit</p>
+          <p>• Press Cmd+Enter to submit from anywhere</p>
+          <p>• Press Cmd+Backspace to cancel</p>
+        </div>
       </div>
     </div>
   )

@@ -1,6 +1,5 @@
 import { createBrowserRouter, RouterProvider } from 'react-router'
 
-import React from 'react'
 import ReactDOM from 'react-dom/client'
 import './globals.css'
 import App from './App'
@@ -8,6 +7,7 @@ import { useKeybinds } from './lib/use-keybinds'
 import { invoke } from '@tauri-apps/api/core'
 import { ErrorBoundary } from './error'
 import { TaskForm } from './views/TaskForm'
+import { TasksList } from './views/TasksList'
 import { Toaster } from './components/ui/sonner'
 
 function GlobalKeybinds() {
@@ -26,6 +26,11 @@ const router = createBrowserRouter([
   {
     path: '/',
     element: <App />,
+    ErrorBoundary,
+  },
+  {
+    path: '/tasks',
+    element: <TasksList />,
     ErrorBoundary,
   },
   {
