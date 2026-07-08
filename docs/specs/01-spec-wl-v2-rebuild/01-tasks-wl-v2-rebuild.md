@@ -119,7 +119,7 @@ generated in a single pass.
 - [x] 4.10 `TestBackend` rendering tests per view + editor stub test.
 - [x] 4.11 Commit: `feat: ratatui TUI with today/standup/tasks/notes views`.
 
-### [ ] 5.0 Homebrew installability + docs polish
+### [x] 5.0 Homebrew installability + docs polish
 
 #### 5.0 Proof Artifact(s)
 
@@ -129,7 +129,7 @@ generated in a single pass.
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Write `.github/workflows/release.yml`: on tag `v*`, build aarch64-apple-darwin, tar + shasum, create GitHub release (mirror worklog-cli's pipeline where sane).
-- [ ] 5.2 Write `Formula/wl.rb` template (url to release tarball, sha256 placeholder documented) + README instructions for `sdavisde/homebrew-tap`.
-- [ ] 5.3 Finalize README (usage, keybinds table, data model, migration guide) and CLAUDE.md accuracy pass.
-- [ ] 5.4 Commit: `feat: release workflow and homebrew formula` and run full gate suite.
+- [x] 5.1 Write `.github/workflows/release.yml`: on tag `v*`, build aarch64-apple-darwin, tar + shasum, create GitHub release (mirror worklog-cli's pipeline where sane).
+- [x] 5.2 Write `Formula/wl.rb` template (url to release tarball, sha256 placeholder documented) + README instructions for `sdavisde/homebrew-tap`.
+- [x] 5.3 Finalize README (usage, keybinds table, data model, migration guide) and CLAUDE.md accuracy pass.
+- [x] 5.4 Commit: `feat: release workflow and homebrew formula` and run full gate suite.
