@@ -1,10 +1,10 @@
 //! Long-running note documents: `notes/*.md`, YAML frontmatter + a simple
 //! sections-and-items markdown body model.
 //!
-//! Not yet wired into a CLI command in this unit — the Notes TUI view (Unit
-//! 4) is the first production consumer — so the whole module is exempted
-//! from the dead-code lint for now.
-#![allow(dead_code)]
+//! `NotesStore::create`/`Body::add_item`/`NotesStore::save` are wired into
+//! the legacy importer (Unit 3). `list`/`load`/`Body::items`/`edit_item`/
+//! `delete_item` remain unused in production until the Notes TUI view (Unit
+//! 4) lands, so those specific items keep a narrow dead-code allow.
 
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -56,6 +56,11 @@ impl Body {
 
     /// Item lines (in order) under `heading`, or empty if the section
     /// doesn't exist.
+    ///
+    /// Unused in production until the Notes TUI view (Unit 4) reads items
+    /// back out of a doc; kept now for the storage-layer spec and exercised
+    /// by unit tests.
+    #[allow(dead_code)]
     pub fn items(&self, heading: &str) -> Vec<&str> {
         self.sections
             .iter()
@@ -87,6 +92,10 @@ impl Body {
 
     /// Replace the text of the `index`-th item (0-based, counting only
     /// items, not free-form lines) under `heading`.
+    ///
+    /// Unused in production until the Notes TUI view (Unit 4) wires up item
+    /// editing.
+    #[allow(dead_code)]
     pub fn edit_item(
         &mut self,
         heading: &str,
@@ -101,6 +110,10 @@ impl Body {
 
     /// Remove the `index`-th item (0-based, counting only items) under
     /// `heading`.
+    ///
+    /// Unused in production until the Notes TUI view (Unit 4) wires up item
+    /// deletion.
+    #[allow(dead_code)]
     pub fn delete_item(&mut self, heading: &str, index: usize) -> Result<()> {
         let pos = item_line_index(self, heading, index)?;
         let section = self.find_section_mut(heading).expect("checked above");
@@ -109,6 +122,8 @@ impl Body {
     }
 }
 
+/// Helper for `edit_item`/`delete_item`, both unused in production for now.
+#[allow(dead_code)]
 fn item_line_index(body: &Body, heading: &str, index: usize) -> Result<usize> {
     let section = body
         .sections
@@ -184,7 +199,10 @@ pub fn serialize_body(body: &Body) -> String {
     out
 }
 
-fn slugify(title: &str) -> String {
+/// Slugify a title/heading into a lowercase, dash-separated identifier.
+/// Shared with the legacy importer, which uses the same rule to match
+/// daily-note `###` subsection names against configured task categories.
+pub(crate) fn slugify(title: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
     for c in title.chars() {
@@ -244,6 +262,9 @@ impl NotesStore {
     }
 
     /// List `(slug, title)` pairs for every note doc, sorted by slug.
+    ///
+    /// Unused in production until the Notes TUI view (Unit 4) lists docs.
+    #[allow(dead_code)]
     pub fn list(&self) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
         if !self.dir.exists() {

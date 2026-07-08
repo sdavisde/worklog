@@ -1,4 +1,4 @@
-# wl
+# worklog
 
 A keyboard-first worklog TUI: instant task capture from the shell, an
 always-on-top-free `ratatui` terminal UI for tasks and long-running notes, and

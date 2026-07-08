@@ -81,7 +81,7 @@ generated in a single pass.
 - [x] 2.7 Integration tests in `tests/cli.rs` using `assert_cmd`-style invocation with `WORKLOG_DIR` temp dirs.
 - [x] 2.8 Commit: `feat: storage layer, task capture, standup command`.
 
-### [ ] 3.0 Legacy migration
+### [x] 3.0 Legacy migration
 
 #### 3.0 Proof Artifact(s)
 
@@ -90,12 +90,12 @@ generated in a single pass.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Implement `src/markdown.rs`: minimal block model (headings, checklist items, list items, paragraphs) sufficient for daily-note parsing; unit tests.
-- [ ] 3.2 Implement importer: latest note → open tasks (### subsection → category mapping, unknown → intake) + note docs from `## Notes` and non-checklist subsection content.
-- [ ] 3.3 Implement historical pass: `- [x]` items across all dailies → archive records; dedupe checked items by exact text across files (old carry-over duplicated them), using the EARLIEST file date as `completed_at`. Real-data expectation: 7 unique archived tasks.
-- [ ] 3.4 Implement move `daily_notes/` → `legacy/`, idempotence refusal, and summary output (counts).
-- [ ] 3.5 Run against scratchpad copy of real `~/.worklog`; eyeball output; capture sanitized transcript as proof artifact in spec dir.
-- [ ] 3.6 Commit: `feat: legacy daily-notes importer`.
+- [x] 3.1 Implement `src/markdown.rs`: minimal block model (headings, checklist items, list items, paragraphs) sufficient for daily-note parsing; unit tests.
+- [x] 3.2 Implement importer: latest note → open tasks (### subsection → category mapping, unknown → intake) + note docs from `## Notes` and non-checklist subsection content.
+- [x] 3.3 Implement historical pass: `- [x]` items across all dailies → archive records; dedupe checked items by exact text across files (old carry-over duplicated them), using the EARLIEST file date as `completed_at`. Real-data expectation: 7 unique archived tasks.
+- [x] 3.4 Implement move `daily_notes/` → `legacy/`, idempotence refusal, and summary output (counts).
+- [x] 3.5 Run against scratchpad copy of real `~/.worklog`; eyeball output; capture sanitized transcript as proof artifact in spec dir.
+- [x] 3.6 Commit: `feat: legacy daily-notes importer`.
 
 ### [ ] 4.0 TUI — Today, Standup, Tasks, Notes + $EDITOR
 

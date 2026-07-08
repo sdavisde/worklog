@@ -46,14 +46,24 @@ impl Store {
         self.dir.join("archive.jsonl")
     }
 
-    /// Used starting with the Notes module (Unit 4 TUI / notes wiring).
-    #[allow(dead_code)]
     pub fn notes_dir(&self) -> PathBuf {
         self.dir.join("notes")
     }
 
     pub fn config_path(&self) -> PathBuf {
         self.dir.join("config.yaml")
+    }
+
+    /// Legacy daily-notes directory, imported by `wl import-legacy`.
+    pub fn daily_notes_dir(&self) -> PathBuf {
+        self.dir.join("daily_notes")
+    }
+
+    /// Destination directory `daily_notes/` is renamed to after a
+    /// successful `wl import-legacy` run; its presence is the idempotence
+    /// guard that keeps the importer from running twice.
+    pub fn legacy_dir(&self) -> PathBuf {
+        self.dir.join("legacy")
     }
 
     /// Load all active/blocked tasks from `tasks.jsonl`.

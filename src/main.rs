@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod markdown;
 mod model;
 mod notes;
 mod standup;
@@ -55,15 +56,11 @@ fn main() -> color_eyre::Result<()> {
             due,
         }) => commands::task::run(text, category, project, due)?,
         Some(Command::Standup) => commands::standup::run()?,
-        Some(Command::ImportLegacy) => run_import_legacy(),
+        Some(Command::ImportLegacy) => commands::import_legacy::run()?,
         None => run_tui(),
     }
 
     Ok(())
-}
-
-fn run_import_legacy() {
-    println!("stub: wl import-legacy not yet implemented");
 }
 
 fn run_tui() {
