@@ -2,9 +2,8 @@
 //! sections-and-items markdown body model.
 //!
 //! `NotesStore::create`/`Body::add_item`/`NotesStore::save` are wired into
-//! the legacy importer (Unit 3). `list`/`load`/`Body::items`/`edit_item`/
-//! `delete_item` remain unused in production until the Notes TUI view (Unit
-//! 4) lands, so those specific items keep a narrow dead-code allow.
+//! the legacy importer (Unit 3); `list`/`load`/`Body::items`/`edit_item`/
+//! `delete_item` back the Notes TUI view (Unit 4).
 
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::{Result, WrapErr, eyre};
@@ -55,11 +54,7 @@ impl Body {
     }
 
     /// Item lines (in order) under `heading`, or empty if the section
-    /// doesn't exist.
-    ///
-    /// Unused in production until the Notes TUI view (Unit 4) reads items
-    /// back out of a doc; kept now for the storage-layer spec and exercised
-    /// by unit tests.
+    /// doesn't exist. A convenience accessor exercised by the unit tests.
     #[allow(dead_code)]
     pub fn items(&self, heading: &str) -> Vec<&str> {
         self.sections
@@ -91,11 +86,8 @@ impl Body {
     }
 
     /// Replace the text of the `index`-th item (0-based, counting only
-    /// items, not free-form lines) under `heading`.
-    ///
-    /// Unused in production until the Notes TUI view (Unit 4) wires up item
-    /// editing.
-    #[allow(dead_code)]
+    /// items, not free-form lines) under `heading`. Backs the Notes TUI
+    /// view's `e` edit-item action.
     pub fn edit_item(
         &mut self,
         heading: &str,
@@ -109,11 +101,7 @@ impl Body {
     }
 
     /// Remove the `index`-th item (0-based, counting only items) under
-    /// `heading`.
-    ///
-    /// Unused in production until the Notes TUI view (Unit 4) wires up item
-    /// deletion.
-    #[allow(dead_code)]
+    /// `heading`. Backs the Notes TUI view's `D` delete-item action.
     pub fn delete_item(&mut self, heading: &str, index: usize) -> Result<()> {
         let pos = item_line_index(self, heading, index)?;
         let section = self.find_section_mut(heading).expect("checked above");
@@ -122,8 +110,7 @@ impl Body {
     }
 }
 
-/// Helper for `edit_item`/`delete_item`, both unused in production for now.
-#[allow(dead_code)]
+/// Helper shared by `edit_item`/`delete_item`.
 fn item_line_index(body: &Body, heading: &str, index: usize) -> Result<usize> {
     let section = body
         .sections
@@ -257,14 +244,14 @@ impl NotesStore {
         Self { dir }
     }
 
-    fn path_for(&self, slug: &str) -> PathBuf {
+    /// On-disk path of a note doc by slug. Used by the TUI's `$EDITOR` escape
+    /// hatch to hand the file to the external editor.
+    pub fn path_for(&self, slug: &str) -> PathBuf {
         self.dir.join(format!("{slug}.md"))
     }
 
-    /// List `(slug, title)` pairs for every note doc, sorted by slug.
-    ///
-    /// Unused in production until the Notes TUI view (Unit 4) lists docs.
-    #[allow(dead_code)]
+    /// List `(slug, title)` pairs for every note doc, sorted by slug. Backs
+    /// the Notes TUI list view.
     pub fn list(&self) -> Result<Vec<(String, String)>> {
         let mut out = Vec::new();
         if !self.dir.exists() {

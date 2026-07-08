@@ -97,7 +97,7 @@ generated in a single pass.
 - [x] 3.5 Run against scratchpad copy of real `~/.worklog`; eyeball output; capture sanitized transcript as proof artifact in spec dir.
 - [x] 3.6 Commit: `feat: legacy daily-notes importer`.
 
-### [ ] 4.0 TUI — Today, Standup, Tasks, Notes + $EDITOR
+### [x] 4.0 TUI — Today, Standup, Tasks, Notes + $EDITOR
 
 #### 4.0 Proof Artifact(s)
 
@@ -107,17 +107,17 @@ generated in a single pass.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Implement `src/tui/mod.rs`: ratatui init/restore with panic hook, event loop, tick/draw cycle.
-- [ ] 4.2 Implement `src/tui/app.rs`: view enum (Today/Standup/Tasks/Notes list/Notes detail), selection state, input mode (normal vs editing buffer), confirm-dialog state.
-- [ ] 4.3 Implement Today view: open/blocked with overdue → due-today → rest ordering, today's completions dimmed at bottom.
-- [ ] 4.4 Implement Standup view reusing the shared standup module.
-- [ ] 4.5 Implement Tasks view: full list, `/` incremental filter, category/project cycle filters.
-- [ ] 4.6 Implement task actions across views: `a` add (with `@category` `#project` token parsing), `space`/`x` complete, `b` block toggle, `e` edit, `d` due date, `D` delete w/ confirm — all write-through to store.
-- [ ] 4.7 Implement Notes views: doc list, doc detail (headings + items), item add/edit/delete via input box, `N` new doc.
-- [ ] 4.8 Implement `src/tui/editor.rs`: `E` suspends TUI (leave alt screen + raw mode), spawns `$EDITOR`/config fallback/`vi` inheriting stdio, waits, restores + full redraw; reload doc from disk.
-- [ ] 4.9 Footer keybind hints per view; `j/k`/arrows navigation; `q`/`esc` back/quit semantics.
-- [ ] 4.10 `TestBackend` rendering tests per view + editor stub test.
-- [ ] 4.11 Commit: `feat: ratatui TUI with today/standup/tasks/notes views`.
+- [x] 4.1 Implement `src/tui/mod.rs`: ratatui init/restore with panic hook, event loop, tick/draw cycle.
+- [x] 4.2 Implement `src/tui/app.rs`: view enum (Today/Standup/Tasks/Notes list/Notes detail), selection state, input mode (normal vs editing buffer), confirm-dialog state.
+- [x] 4.3 Implement Today view: open/blocked with overdue → due-today → rest ordering, today's completions dimmed at bottom.
+- [x] 4.4 Implement Standup view reusing the shared standup module.
+- [x] 4.5 Implement Tasks view: full list, `/` incremental filter, category/project cycle filters.
+- [x] 4.6 Implement task actions across views: `a` add (with `@category` `#project` token parsing), `space`/`x` complete, `b` block toggle, `e` edit, `d` due date, `D` delete w/ confirm — all write-through to store.
+- [x] 4.7 Implement Notes views: doc list, doc detail (headings + items), item add/edit/delete via input box, `N` new doc.
+- [x] 4.8 Implement `src/tui/editor.rs`: `E` suspends TUI (leave alt screen + raw mode), spawns `$EDITOR`/config fallback/`vi` inheriting stdio, waits, restores + full redraw; reload doc from disk.
+- [x] 4.9 Footer keybind hints per view; `j/k`/arrows navigation; `q`/`esc` back/quit semantics.
+- [x] 4.10 `TestBackend` rendering tests per view + editor stub test.
+- [x] 4.11 Commit: `feat: ratatui TUI with today/standup/tasks/notes views`.
 
 ### [ ] 5.0 Homebrew installability + docs polish
 

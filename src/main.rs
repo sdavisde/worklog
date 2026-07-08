@@ -5,6 +5,7 @@ mod model;
 mod notes;
 mod standup;
 mod store;
+mod tui;
 
 use clap::{Parser, Subcommand};
 
@@ -57,12 +58,8 @@ fn main() -> color_eyre::Result<()> {
         }) => commands::task::run(text, category, project, due)?,
         Some(Command::Standup) => commands::standup::run()?,
         Some(Command::ImportLegacy) => commands::import_legacy::run()?,
-        None => run_tui(),
+        None => tui::run()?,
     }
 
     Ok(())
-}
-
-fn run_tui() {
-    println!("TUI not yet implemented");
 }

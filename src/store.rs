@@ -94,12 +94,8 @@ impl Store {
     }
 
     /// Mark the task with the given id as done: set `status`/`completed_at`,
-    /// remove it from `tasks.jsonl`, and append it to `archive.jsonl`.
-    ///
-    /// Not yet wired into a CLI command in this unit (the TUI's `space`/`x`
-    /// complete action lands in a later unit), but implemented now per the
-    /// storage-layer spec.
-    #[allow(dead_code)]
+    /// remove it from `tasks.jsonl`, and append it to `archive.jsonl`. Wired
+    /// into the TUI's `space`/`x` complete action.
     pub fn complete_task(&self, id: &str) -> Result<Task> {
         let mut tasks = self.load_tasks()?;
         let idx = tasks

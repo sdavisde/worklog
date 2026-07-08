@@ -9,11 +9,9 @@ use std::path::Path;
 pub struct Config {
     #[serde(default = "default_categories")]
     pub categories: Vec<String>,
-    /// Fallback editor for the TUI's `$EDITOR` escape hatch (used starting
-    /// with the TUI unit; kept here now so `config.yaml` is self-describing
-    /// from day one).
+    /// Fallback editor for the TUI's `$EDITOR` escape hatch, used when the
+    /// `$EDITOR` environment variable is unset.
     #[serde(default = "default_editor_command")]
-    #[allow(dead_code)]
     pub editor_command: String,
 }
 
