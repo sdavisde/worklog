@@ -44,7 +44,7 @@ generated in a single pass.
 
 ## Tasks
 
-### [ ] 1.0 Repo reset + Rust scaffold + AI-native tooling
+### [x] 1.0 Repo reset + Rust scaffold + AI-native tooling
 
 #### 1.0 Proof Artifact(s)
 
@@ -54,13 +54,13 @@ generated in a single pass.
 
 #### 1.0 Tasks
 
-- [ ] 1.1 `git rm` all Tauri/React-era files (src/, src-tauri/, public/, package.json, configs, old CLAUDE.md/README.md, project-plan.md, .cursor/, .vscode/); keep `DESIGN.md`, `docs/`, `.git`.
-- [ ] 1.2 `cargo init` (edition 2024) with `[[bin]] name = "wl"`; add pinned deps from research: ratatui, crossterm, clap (derive), serde, serde_json, chrono, YAML crate, anyhow.
-- [ ] 1.3 Write `.gitignore` (target/, local test-data dirs), `rustfmt.toml` only if deviating (default: none), clippy config via Cargo.toml lints table.
-- [ ] 1.4 Write `.githooks/pre-commit` (fmt --check, clippy -D warnings, test) and document `git config core.hooksPath .githooks` in README + CLAUDE.md; set the config locally.
-- [ ] 1.5 Write `.github/workflows/ci.yml` running the same three gates on push.
-- [ ] 1.6 Write minimal-correct `CLAUDE.md` (commands, architecture map, data model, keyboard-first philosophy, no-personal-data rule) and stub `README.md`.
-- [ ] 1.7 Commit: `chore!: reset repo for wl v2 rust rebuild`.
+- [x] 1.1 `git rm` all Tauri/React-era files (src/, src-tauri/, public/, package.json, configs, old CLAUDE.md/README.md, project-plan.md, .cursor/, .vscode/); keep `DESIGN.md`, `docs/`, `.git`.
+- [x] 1.2 `cargo init` (edition 2024) with `[[bin]] name = "wl"`; add pinned deps from research: ratatui, crossterm, clap (derive), serde, serde_json, chrono, YAML crate, anyhow.
+- [x] 1.3 Write `.gitignore` (target/, local test-data dirs), `rustfmt.toml` only if deviating (default: none), clippy config via Cargo.toml lints table.
+- [x] 1.4 Write `.githooks/pre-commit` (fmt --check, clippy -D warnings, test) and document `git config core.hooksPath .githooks` in README + CLAUDE.md; set the config locally.
+- [x] 1.5 Write `.github/workflows/ci.yml` running the same three gates on push.
+- [x] 1.6 Write minimal-correct `CLAUDE.md` (commands, architecture map, data model, keyboard-first philosophy, no-personal-data rule) and stub `README.md`.
+- [x] 1.7 Commit: `chore!: reset repo for wl v2 rust rebuild`.
 
 ### [ ] 2.0 Storage layer + CLI capture + standup
 
@@ -92,7 +92,7 @@ generated in a single pass.
 
 - [ ] 3.1 Implement `src/markdown.rs`: minimal block model (headings, checklist items, list items, paragraphs) sufficient for daily-note parsing; unit tests.
 - [ ] 3.2 Implement importer: latest note → open tasks (### subsection → category mapping, unknown → intake) + note docs from `## Notes` and non-checklist subsection content.
-- [ ] 3.3 Implement historical pass: `- [x]` items across all dailies → archive records with file date as `completed_at` (dedupe identical text+date).
+- [ ] 3.3 Implement historical pass: `- [x]` items across all dailies → archive records; dedupe checked items by exact text across files (old carry-over duplicated them), using the EARLIEST file date as `completed_at`. Real-data expectation: 7 unique archived tasks.
 - [ ] 3.4 Implement move `daily_notes/` → `legacy/`, idempotence refusal, and summary output (counts).
 - [ ] 3.5 Run against scratchpad copy of real `~/.worklog`; eyeball output; capture sanitized transcript as proof artifact in spec dir.
 - [ ] 3.6 Commit: `feat: legacy daily-notes importer`.
