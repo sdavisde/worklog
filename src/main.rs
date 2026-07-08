@@ -1,3 +1,10 @@
+mod commands;
+mod config;
+mod model;
+mod notes;
+mod standup;
+mod store;
+
 use clap::{Parser, Subcommand};
 
 /// wl - a keyboard-first worklog TUI and CLI.
@@ -46,21 +53,13 @@ fn main() -> color_eyre::Result<()> {
             category,
             project,
             due,
-        }) => run_task(text, category, project, due),
-        Some(Command::Standup) => run_standup(),
+        }) => commands::task::run(text, category, project, due)?,
+        Some(Command::Standup) => commands::standup::run()?,
         Some(Command::ImportLegacy) => run_import_legacy(),
         None => run_tui(),
     }
 
     Ok(())
-}
-
-fn run_task(text: String, category: Option<String>, project: Option<String>, due: Option<String>) {
-    println!("stub: wl task {text:?} (category={category:?}, project={project:?}, due={due:?})");
-}
-
-fn run_standup() {
-    println!("stub: wl standup not yet implemented");
 }
 
 fn run_import_legacy() {

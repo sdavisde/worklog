@@ -62,7 +62,7 @@ generated in a single pass.
 - [x] 1.6 Write minimal-correct `CLAUDE.md` (commands, architecture map, data model, keyboard-first philosophy, no-personal-data rule) and stub `README.md`.
 - [x] 1.7 Commit: `chore!: reset repo for wl v2 rust rebuild`.
 
-### [ ] 2.0 Storage layer + CLI capture + standup
+### [x] 2.0 Storage layer + CLI capture + standup
 
 #### 2.0 Proof Artifact(s)
 
@@ -72,14 +72,14 @@ generated in a single pass.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Implement `src/model.rs`: `Task` struct (id, text, category, project, status, due, created_at, completed_at), `Status` enum, `t_`+base36 id gen, serde round-trip unit tests.
-- [ ] 2.2 Implement `src/store.rs`: `WORKLOG_DIR`/`~/.worklog` resolution, load/save `tasks.jsonl` (atomic temp+rename), append `archive.jsonl`, `complete_task` moves record; unit tests.
-- [ ] 2.3 Implement `src/config.rs`: load-or-create `config.yaml` with commented defaults (categories: priority, support, project-management, engineering, intake; editor_command).
-- [ ] 2.4 Implement `src/notes.rs`: list note docs, parse/write YAML frontmatter, create doc, add/edit/delete top-level list items under headings; unit tests.
-- [ ] 2.5 Implement `wl task` subcommand with `--category/--project/--due` (validate category against config; default `intake`).
-- [ ] 2.6 Implement standup report logic (shared module) + `wl standup` printer: completed-yesterday with most-recent-day fallback (labeled), open, blocked.
-- [ ] 2.7 Integration tests in `tests/cli.rs` using `assert_cmd`-style invocation with `WORKLOG_DIR` temp dirs.
-- [ ] 2.8 Commit: `feat: storage layer, task capture, standup command`.
+- [x] 2.1 Implement `src/model.rs`: `Task` struct (id, text, category, project, status, due, created_at, completed_at), `Status` enum, `t_`+base36 id gen, serde round-trip unit tests.
+- [x] 2.2 Implement `src/store.rs`: `WORKLOG_DIR`/`~/.worklog` resolution, load/save `tasks.jsonl` (atomic temp+rename), append `archive.jsonl`, `complete_task` moves record; unit tests.
+- [x] 2.3 Implement `src/config.rs`: load-or-create `config.yaml` with commented defaults (categories: priority, support, project-management, engineering, intake; editor_command).
+- [x] 2.4 Implement `src/notes.rs`: list note docs, parse/write YAML frontmatter, create doc, add/edit/delete top-level list items under headings; unit tests.
+- [x] 2.5 Implement `wl task` subcommand with `--category/--project/--due` (validate category against config; default `intake`).
+- [x] 2.6 Implement standup report logic (shared module) + `wl standup` printer: completed-yesterday with most-recent-day fallback (labeled), open, blocked.
+- [x] 2.7 Integration tests in `tests/cli.rs` using `assert_cmd`-style invocation with `WORKLOG_DIR` temp dirs.
+- [x] 2.8 Commit: `feat: storage layer, task capture, standup command`.
 
 ### [ ] 3.0 Legacy migration
 
