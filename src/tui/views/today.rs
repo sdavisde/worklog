@@ -2,13 +2,13 @@
 //! today's completions dimmed below.
 
 use crate::tui::app::App;
-use crate::tui::views::{completed_line, header_style, selection_style, task_line};
+use crate::tui::views::{completed_line, header_style, pane_block, selection_style, task_line};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
-pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let active = app.today_active();
     let completions = app.today_completions();
     let comp_height = if completions.is_empty() {
@@ -30,12 +30,12 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     };
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Today"))
+        .block(pane_block("Today", focused))
         .highlight_style(selection_style())
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    if !active.is_empty() {
+    if focused && !active.is_empty() {
         state.select(Some(app.today_sel));
     }
     frame.render_stateful_widget(list, top, &mut state);

@@ -3,7 +3,7 @@
 //! the same `handle_key` path the event loop uses. All I/O is confined to
 //! `tempfile` temp dirs; nothing touches a real `~/.worklog`.
 
-use super::app::{App, Mode, View};
+use super::app::{App, Focus, Mode, Tab};
 use super::editor;
 use super::views;
 use crate::config::Config;
@@ -43,7 +43,11 @@ fn archived_on(text: &str, days_ago: i64) -> Task {
 }
 
 fn render(app: &App) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    render_sized(app, 120, 40)
+}
+
+fn render_sized(app: &App, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| views::draw(app, frame)).unwrap();
     terminal.backend().to_string()
 }
@@ -120,7 +124,7 @@ fn standup_view_shows_three_groups() {
         .unwrap();
 
     let mut app = app_in(dir.path());
-    app.view = View::Standup;
+    app.tab = Tab::Standup;
     let out = render(&app);
 
     assert!(out.contains("Completed yesterday"));
@@ -143,7 +147,7 @@ fn tasks_view_incremental_filter_narrows_list() {
         .unwrap();
 
     let mut app = app_in(dir.path());
-    app.view = View::Tasks;
+    app.tab = Tab::Tasks;
 
     let before = render(&app);
     assert!(before.contains("fix login bug"));
@@ -165,7 +169,7 @@ fn tasks_view_incremental_filter_narrows_list() {
 fn tasks_view_footer_shows_hints() {
     let dir = TempDir::new().unwrap();
     let mut app = app_in(dir.path());
-    app.view = View::Tasks;
+    app.tab = Tab::Tasks;
     let out = render(&app);
     assert!(out.contains("filter"), "footer hint present");
     assert!(out.contains("cat["), "category filter indicator present");
@@ -180,14 +184,14 @@ fn notes_list_and_detail_render_content() {
     notes.save(&mut doc).unwrap();
 
     let mut app = app_in(dir.path());
-    app.view = View::NotesList;
+    app.tab = Tab::Notes;
     let list_out = render(&app);
     assert!(list_out.contains("Long-term goals"), "note title in list");
     assert!(list_out.contains("1 items"), "item count in list");
 
-    // open the doc
+    // open the doc into the side pane
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.view, View::NoteDetail);
+    assert_eq!(app.focus, Focus::Side);
     let detail_out = render(&app);
     assert!(
         detail_out.contains("Areas to grow into"),
@@ -203,7 +207,7 @@ fn notes_list_and_detail_render_content() {
 fn add_task_parses_category_and_project_tokens() {
     let dir = TempDir::new().unwrap();
     let mut app = app_in(dir.path());
-    app.view = View::Tasks;
+    app.tab = Tab::Tasks;
 
     press(&mut app, KeyCode::Char('a'));
     type_str(&mut app, "fix login @engineering #auth");
@@ -342,13 +346,17 @@ fn delete_confirm_and_cancel() {
 fn new_note_creates_doc_and_opens_detail() {
     let dir = TempDir::new().unwrap();
     let mut app = app_in(dir.path());
-    app.view = View::NotesList;
+    app.tab = Tab::Notes;
 
     press(&mut app, KeyCode::Char('N'));
     type_str(&mut app, "Scratchpad");
     press(&mut app, KeyCode::Enter);
 
-    assert_eq!(app.view, View::NoteDetail);
+    assert_eq!(app.focus, Focus::Side);
+    assert_eq!(
+        app.current_note.as_ref().unwrap().frontmatter.title,
+        "Scratchpad"
+    );
     let listed = NotesStore::new(dir.path().join("notes")).list().unwrap();
     assert!(listed.iter().any(|(_, title)| title == "Scratchpad"));
 }
@@ -361,9 +369,9 @@ fn add_note_item_persists_and_delete_removes_it() {
     let slug = doc.slug.clone();
 
     let mut app = app_in(dir.path());
-    app.view = View::NotesList;
+    app.tab = Tab::Notes;
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.view, View::NoteDetail);
+    assert_eq!(app.focus, Focus::Side);
 
     press(&mut app, KeyCode::Char('a'));
     type_str(&mut app, "ship the thing");
@@ -381,6 +389,183 @@ fn add_note_item_persists_and_delete_removes_it() {
         .load(&slug)
         .unwrap();
     assert!(after.body.items("Notes").is_empty());
+}
+
+// ---- multi-pane layout & focus ---------------------------------------------
+
+fn seed_note(dir: &Path, title: &str, items: &[&str]) -> String {
+    let notes = NotesStore::new(dir.join("notes"));
+    let mut doc = notes.create(title, None).unwrap();
+    for item in items {
+        doc.body.add_item("Notes", *item);
+    }
+    notes.save(&mut doc).unwrap();
+    doc.slug
+}
+
+#[test]
+fn tab_bar_renders_all_four_labels() {
+    let dir = TempDir::new().unwrap();
+    let app = app_in(dir.path());
+    let out = render(&app);
+    assert!(out.contains("[1] Today"));
+    assert!(out.contains("[2] Standup"));
+    assert!(out.contains("[3] Tasks"));
+    assert!(out.contains("[4] Notes"));
+}
+
+#[test]
+fn number_and_letter_keys_switch_tabs_and_reset_focus() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Any", &["item"]);
+    let mut app = app_in(dir.path());
+
+    press(&mut app, KeyCode::Char('2'));
+    assert_eq!(app.tab, Tab::Standup);
+    press(&mut app, KeyCode::Char('3'));
+    assert_eq!(app.tab, Tab::Tasks);
+    press(&mut app, KeyCode::Char('4'));
+    assert_eq!(app.tab, Tab::Notes);
+    press(&mut app, KeyCode::Char('1'));
+    assert_eq!(app.tab, Tab::Today);
+
+    // letters keep working, even from the side pane, and focus returns Main
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Side);
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(app.tab, Tab::Standup);
+    assert_eq!(app.focus, Focus::Main);
+    press(&mut app, KeyCode::Char('t'));
+    assert_eq!(app.tab, Tab::Tasks);
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(app.tab, Tab::Notes);
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.tab, Tab::Today);
+}
+
+#[test]
+fn tab_key_toggles_focus_and_reroutes_movement() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[
+            task("task one", "engineering", Status::Open, None),
+            task("task two", "engineering", Status::Open, None),
+        ])
+        .unwrap();
+    seed_note(dir.path(), "Focus note", &["first item", "second item"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.today_sel, 1, "j moves the task selection when Main");
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Side);
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.note_item_sel, 1, "j moves the note item when Side");
+    assert_eq!(app.today_sel, 1, "task selection untouched");
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Main);
+}
+
+#[test]
+fn bracket_keys_cycle_side_pane_note() {
+    let dir = TempDir::new().unwrap();
+    let alpha = seed_note(dir.path(), "Alpha note", &["alpha item"]);
+    let beta = seed_note(dir.path(), "Beta note", &["beta item"]);
+
+    let mut app = app_in(dir.path());
+    assert_eq!(
+        app.current_note.as_ref().unwrap().slug,
+        alpha,
+        "first note auto-loaded on startup"
+    );
+
+    press(&mut app, KeyCode::Char('l'));
+    assert_eq!(app.focus, Focus::Side);
+    press(&mut app, KeyCode::Char(']'));
+    assert_eq!(app.current_note.as_ref().unwrap().slug, beta);
+    press(&mut app, KeyCode::Char(']'));
+    assert_eq!(app.current_note.as_ref().unwrap().slug, alpha, "wraps");
+    press(&mut app, KeyCode::Char('['));
+    assert_eq!(app.current_note.as_ref().unwrap().slug, beta);
+}
+
+#[test]
+fn side_pane_shows_note_content_on_today_tab() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("some task", "engineering", Status::Open, None)])
+        .unwrap();
+    seed_note(dir.path(), "Side note", &["visible from today"]);
+
+    let app = app_in(dir.path());
+    assert_eq!(app.tab, Tab::Today);
+    let out = render(&app);
+    assert!(out.contains("some task"), "main pane content");
+    assert!(out.contains("Side note"), "side pane title");
+    assert!(out.contains("visible from today"), "side pane item");
+}
+
+#[test]
+fn narrow_terminal_shows_only_the_focused_pane() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("wide task", "engineering", Status::Open, None)])
+        .unwrap();
+    seed_note(dir.path(), "Narrow note", &["hidden item"]);
+
+    let mut app = app_in(dir.path());
+    let main_only = render_sized(&app, 60, 40);
+    assert!(main_only.contains("wide task"), "focused main pane shown");
+    assert!(!main_only.contains("hidden item"), "side pane hidden");
+
+    press(&mut app, KeyCode::Tab);
+    let side_only = render_sized(&app, 60, 40);
+    assert!(side_only.contains("hidden item"), "focused side pane shown");
+    assert!(!side_only.contains("wide task"), "main pane hidden");
+}
+
+#[test]
+fn esc_from_side_returns_to_main_then_quits() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Esc note", &["item"]);
+    let mut app = app_in(dir.path());
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Side);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.focus, Focus::Main);
+    assert!(!app.should_quit, "esc from side does not quit");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.should_quit, "esc from main quits");
+}
+
+#[test]
+fn last_opened_note_persists_across_sessions() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["a"]);
+    let beta = seed_note(dir.path(), "Beta note", &["b"]);
+
+    {
+        let mut app = app_in(dir.path());
+        app.tab = Tab::Notes;
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.current_note.as_ref().unwrap().slug, beta);
+    }
+    assert!(dir.path().join("state.json").exists(), "state.json written");
+
+    let reopened = app_in(dir.path());
+    assert_eq!(
+        reopened.current_note.as_ref().unwrap().slug,
+        beta,
+        "last-opened note restored"
+    );
+    assert_eq!(reopened.notes_sel, 1, "notes list highlight tracks it");
 }
 
 // ---- editor escape hatch --------------------------------------------------
@@ -410,9 +595,9 @@ fn editor_request_set_and_roundtrip_reloads_doc() {
     }
 
     let mut app = app_in(dir.path());
-    app.view = View::NotesList;
+    app.tab = Tab::Notes;
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.view, View::NoteDetail);
+    assert_eq!(app.focus, Focus::Side);
 
     press(&mut app, KeyCode::Char('E'));
     assert!(app.editor_request.is_some(), "editor request queued");

@@ -1,16 +1,16 @@
-//! Notes views: the document list and the per-document detail (headings +
-//! items) with item selection.
+//! Notes rendering: the Notes tab's document list and the per-document
+//! detail (headings + items) shown in the always-on side pane.
 
 use crate::notes::Line as NoteLine;
 use crate::tui::app::App;
-use crate::tui::views::{dim_style, header_style, selection_style};
+use crate::tui::views::{dim_style, header_style, pane_block, selection_style};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
+use ratatui::widgets::{List, ListItem, ListState};
 
-pub fn render_list(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let items: Vec<ListItem> = if app.notes_list.is_empty() {
         vec![ListItem::new(Line::from(Span::raw(
             "(no notes — press N to create one)",
@@ -28,18 +28,18 @@ pub fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     };
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Notes"))
+        .block(pane_block("Notes", focused))
         .highlight_style(selection_style())
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    if !app.notes_list.is_empty() {
+    if focused && !app.notes_list.is_empty() {
         state.select(Some(app.notes_sel));
     }
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-pub fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render_detail(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let title = app
         .current_note
         .as_ref()
@@ -72,19 +72,24 @@ pub fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     if rows.is_empty() {
-        rows.push(ListItem::new(Line::from(Span::raw(
-            "(empty — press a to add an item)",
-        ))));
+        let hint = if app.current_note.is_some() {
+            "(empty — press a to add an item)"
+        } else {
+            "(no notes — press N on the Notes tab)"
+        };
+        rows.push(ListItem::new(Line::from(Span::raw(hint))));
     }
 
     let list = List::new(rows)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(pane_block(title, focused))
         .highlight_style(selection_style())
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    if let Some(row) = item_row_indices.get(app.note_item_sel) {
-        state.select(Some(*row));
+    if focused {
+        if let Some(row) = item_row_indices.get(app.note_item_sel) {
+            state.select(Some(*row));
+        }
     }
     frame.render_stateful_widget(list, area, &mut state);
 }

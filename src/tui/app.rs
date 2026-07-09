@@ -1,5 +1,6 @@
-//! App state machine for the TUI: the active view, input mode, per-view
-//! selection, and all write-through mutations against [`Store`]/[`NotesStore`].
+//! App state machine for the TUI: the active tab, pane focus, input mode,
+//! per-pane selection, and all write-through mutations against
+//! [`Store`]/[`NotesStore`].
 //!
 //! Rendering is kept pure (see [`crate::tui::views`]): every field the views
 //! read lives here, and [`App::handle_key`] is the single entry point for
@@ -17,22 +18,20 @@ use color_eyre::eyre::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use std::path::PathBuf;
 
-/// The five top-level screens.
+/// The four top-level tabs shown in the tab bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
+pub enum Tab {
     Today,
     Standup,
     Tasks,
-    NotesList,
-    NoteDetail,
+    Notes,
 }
 
-impl View {
-    /// A view the user quits from (as opposed to `NoteDetail`, which `esc`/`q`
-    /// backs out of into `NotesList`).
-    fn is_top_level(self) -> bool {
-        !matches!(self, View::NoteDetail)
-    }
+/// Which pane owns keyboard input: the tab content or the notes side pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Main,
+    Side,
 }
 
 /// What an in-progress single-line input buffer will do when committed.
@@ -117,7 +116,7 @@ pub struct NoteItemRef {
     pub text: String,
 }
 
-/// A note doc as shown in the NotesList view: title + total item count.
+/// A note doc as shown in the Notes tab's list: title + total item count.
 #[derive(Debug, Clone)]
 pub struct NoteSummary {
     pub slug: String,
@@ -130,7 +129,8 @@ pub struct App {
     pub notes: NotesStore,
     pub config: Config,
 
-    pub view: View,
+    pub tab: Tab,
+    pub focus: Focus,
     pub mode: Mode,
 
     pub tasks: Vec<Task>,
@@ -163,7 +163,8 @@ impl App {
             store,
             notes,
             config,
-            view: View::Today,
+            tab: Tab::Today,
+            focus: Focus::Main,
             mode: Mode::Normal,
             tasks: Vec::new(),
             archive: Vec::new(),
@@ -183,6 +184,20 @@ impl App {
             today: Local::now().date_naive(),
         };
         app.reload()?;
+
+        // Preload the side pane: the last-opened note from `state.json` if it
+        // still exists, else the first note.
+        let idx = app
+            .load_last_note_slug()
+            .and_then(|slug| app.notes_list.iter().position(|s| s.slug == slug))
+            .or(if app.notes_list.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
+        if let Some(idx) = idx {
+            app.open_note_at(idx)?;
+        }
         Ok(app)
     }
 
@@ -322,9 +337,9 @@ impl App {
     }
 
     fn selected_task(&self) -> Option<Task> {
-        match self.view {
-            View::Today => self.today_active().into_iter().nth(self.today_sel),
-            View::Tasks => self.tasks_filtered().into_iter().nth(self.tasks_sel),
+        match self.tab {
+            Tab::Today => self.today_active().into_iter().nth(self.today_sel),
+            Tab::Tasks => self.tasks_filtered().into_iter().nth(self.tasks_sel),
             _ => None,
         }
     }
@@ -346,21 +361,25 @@ impl App {
     // ---- selection helpers ------------------------------------------------
 
     fn current_len(&self) -> usize {
-        match self.view {
-            View::Today => self.today_active().len(),
-            View::Tasks => self.tasks_filtered().len(),
-            View::NotesList => self.notes_list.len(),
-            View::NoteDetail => self.note_items().len(),
-            View::Standup => 0,
+        match self.focus {
+            Focus::Side => self.note_items().len(),
+            Focus::Main => match self.tab {
+                Tab::Today => self.today_active().len(),
+                Tab::Tasks => self.tasks_filtered().len(),
+                Tab::Notes => self.notes_list.len(),
+                Tab::Standup => 0,
+            },
         }
     }
 
     fn current_sel_mut(&mut self) -> &mut usize {
-        match self.view {
-            View::Today | View::Standup => &mut self.today_sel,
-            View::Tasks => &mut self.tasks_sel,
-            View::NotesList => &mut self.notes_sel,
-            View::NoteDetail => &mut self.note_item_sel,
+        match self.focus {
+            Focus::Side => &mut self.note_item_sel,
+            Focus::Main => match self.tab {
+                Tab::Today | Tab::Standup => &mut self.today_sel,
+                Tab::Tasks => &mut self.tasks_sel,
+                Tab::Notes => &mut self.notes_sel,
+            },
         }
     }
 
@@ -398,30 +417,48 @@ impl App {
 
     fn handle_normal_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                if self.view.is_top_level() {
-                    self.should_quit = true;
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                if self.focus == Focus::Side {
+                    self.focus = Focus::Main;
                 } else {
-                    self.view = View::NotesList;
+                    self.should_quit = true;
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_sel(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_sel(-1),
 
-            // view switches (only from a top-level view)
-            KeyCode::Char('g') if self.view.is_top_level() => self.view = View::Today,
-            KeyCode::Char('s') if self.view.is_top_level() => self.view = View::Standup,
-            KeyCode::Char('t') if self.view.is_top_level() => self.view = View::Tasks,
-            KeyCode::Char('n') if self.view.is_top_level() => self.view = View::NotesList,
+            // pane focus
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.focus = match self.focus {
+                    Focus::Main => Focus::Side,
+                    Focus::Side => Focus::Main,
+                };
+            }
+            KeyCode::Char('l') | KeyCode::Right => self.focus = Focus::Side,
+            KeyCode::Char('h') | KeyCode::Left => self.focus = Focus::Main,
 
-            _ => match self.view {
-                View::Today | View::Tasks => self.handle_task_key(key)?,
-                View::NotesList => self.handle_notes_list_key(key)?,
-                View::NoteDetail => self.handle_note_detail_key(key)?,
-                View::Standup => {}
+            // tab switches (global; focus returns to the main pane)
+            KeyCode::Char('1') | KeyCode::Char('g') => self.switch_tab(Tab::Today),
+            KeyCode::Char('2') | KeyCode::Char('s') => self.switch_tab(Tab::Standup),
+            KeyCode::Char('3') | KeyCode::Char('t') => self.switch_tab(Tab::Tasks),
+            KeyCode::Char('4') | KeyCode::Char('n') => self.switch_tab(Tab::Notes),
+
+            _ => match self.focus {
+                Focus::Side => self.handle_side_key(key)?,
+                Focus::Main => match self.tab {
+                    Tab::Today | Tab::Tasks => self.handle_task_key(key)?,
+                    Tab::Notes => self.handle_notes_list_key(key)?,
+                    Tab::Standup => {}
+                },
             },
         }
         Ok(())
+    }
+
+    fn switch_tab(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.focus = Focus::Main;
     }
 
     fn handle_task_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -471,13 +508,13 @@ impl App {
                     self.mode = Mode::ConfirmDelete;
                 }
             }
-            // Tasks-view-only filters
-            KeyCode::Char('/') if self.view == View::Tasks => {
+            // Tasks-tab-only filters
+            KeyCode::Char('/') if self.tab == Tab::Tasks => {
                 self.mode =
                     Mode::Editing(Editing::new(EditPurpose::Filter, self.filter_text.clone()));
             }
-            KeyCode::Char('c') if self.view == View::Tasks => self.cycle_category(),
-            KeyCode::Char('p') if self.view == View::Tasks => self.cycle_project(),
+            KeyCode::Char('c') if self.tab == Tab::Tasks => self.cycle_category(),
+            KeyCode::Char('p') if self.tab == Tab::Tasks => self.cycle_project(),
             _ => {}
         }
         Ok(())
@@ -486,11 +523,9 @@ impl App {
     fn handle_notes_list_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Enter => {
-                if let Some(summary) = self.notes_list.get(self.notes_sel) {
-                    let slug = summary.slug.clone();
-                    self.current_note = Some(self.notes.load(&slug)?);
-                    self.view = View::NoteDetail;
-                    self.note_item_sel = 0;
+                if self.notes_list.get(self.notes_sel).is_some() {
+                    self.open_note_at(self.notes_sel)?;
+                    self.focus = Focus::Side;
                 }
             }
             KeyCode::Char('N') => {
@@ -501,8 +536,36 @@ impl App {
         Ok(())
     }
 
-    fn handle_note_detail_key(&mut self, key: KeyEvent) -> Result<()> {
+    /// Load the note at `idx` in `notes_list` into the side pane and remember
+    /// it as the last-opened note.
+    fn open_note_at(&mut self, idx: usize) -> Result<()> {
+        if let Some(summary) = self.notes_list.get(idx) {
+            let slug = summary.slug.clone();
+            self.current_note = Some(self.notes.load(&slug)?);
+            self.notes_sel = idx;
+            self.note_item_sel = 0;
+            self.persist_last_note();
+        }
+        Ok(())
+    }
+
+    /// `[`/`]`: advance the side pane to the previous/next note, wrapping.
+    fn cycle_note(&mut self, delta: i32) -> Result<()> {
+        if self.notes_list.is_empty() {
+            return Ok(());
+        }
+        let len = self.notes_list.len() as i32;
+        let next = (self.notes_sel as i32 + delta).rem_euclid(len) as usize;
+        self.open_note_at(next)
+    }
+
+    fn handle_side_key(&mut self, key: KeyEvent) -> Result<()> {
+        if self.current_note.is_none() {
+            return Ok(());
+        }
         match key.code {
+            KeyCode::Char('[') => self.cycle_note(-1)?,
+            KeyCode::Char(']') => self.cycle_note(1)?,
             KeyCode::Char('a') => {
                 let heading = self.current_heading();
                 self.mode = Mode::Editing(Editing::new(
@@ -551,15 +614,8 @@ impl App {
     }
 
     fn perform_delete(&mut self) -> Result<()> {
-        match self.view {
-            View::Today | View::Tasks => {
-                if let Some(sel) = self.selected_task() {
-                    self.tasks.retain(|t| t.id != sel.id);
-                    self.store.save_tasks(&self.tasks)?;
-                    self.reload()?;
-                }
-            }
-            View::NoteDetail => {
+        match self.focus {
+            Focus::Side => {
                 if let Some(it) = self.note_items().get(self.note_item_sel).cloned() {
                     if let Some(doc) = &mut self.current_note {
                         doc.body.delete_item(&it.heading, it.item_index)?;
@@ -568,7 +624,16 @@ impl App {
                     self.reload_current_note()?;
                 }
             }
-            _ => {}
+            Focus::Main => match self.tab {
+                Tab::Today | Tab::Tasks => {
+                    if let Some(sel) = self.selected_task() {
+                        self.tasks.retain(|t| t.id != sel.id);
+                        self.store.save_tasks(&self.tasks)?;
+                        self.reload()?;
+                    }
+                }
+                _ => {}
+            },
         }
         Ok(())
     }
@@ -668,9 +733,13 @@ impl App {
                 if !text.is_empty() {
                     let doc = self.notes.create(&text, None)?;
                     self.reload()?;
+                    if let Some(idx) = self.notes_list.iter().position(|s| s.slug == doc.slug) {
+                        self.notes_sel = idx;
+                    }
                     self.current_note = Some(doc);
-                    self.view = View::NoteDetail;
                     self.note_item_sel = 0;
+                    self.focus = Focus::Side;
+                    self.persist_last_note();
                 }
                 self.mode = Mode::Normal;
             }
@@ -740,6 +809,24 @@ impl App {
             _ => None,
         };
         self.tasks_sel = 0;
+    }
+
+    // ---- cross-session UI state (state.json) -------------------------------
+
+    /// Slug of the last-opened note recorded in `state.json`, if readable.
+    fn load_last_note_slug(&self) -> Option<String> {
+        let content = std::fs::read_to_string(self.store.state_path()).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+        Some(v.get("last_note")?.as_str()?.to_string())
+    }
+
+    /// Best-effort save of the open note's slug: UI state is not worth
+    /// failing an interaction over, so write errors are ignored.
+    fn persist_last_note(&self) {
+        if let Some(doc) = &self.current_note {
+            let v = serde_json::json!({ "last_note": doc.slug });
+            let _ = std::fs::write(self.store.state_path(), format!("{v}\n"));
+        }
     }
 
     /// Run the pending `$EDITOR` request (if any) using `editor` as the

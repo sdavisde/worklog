@@ -7,7 +7,7 @@ mod tasks;
 mod today;
 
 use crate::model::{Status, Task};
-use crate::tui::app::{App, EditPurpose, Editing, Mode, View};
+use crate::tui::app::{App, EditPurpose, Editing, Focus, Mode, Tab};
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -15,18 +15,36 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-/// Entry point: split off a one-line footer, render the active view into the
-/// body, then draw any active input box / confirm prompt on top.
+/// Minimum body width for the two-pane layout; below this only the focused
+/// pane renders, full width.
+const SPLIT_MIN_WIDTH: u16 = 80;
+
+/// Entry point: tab bar on top, footer below, and a main/side body split with
+/// the notes pane always alongside the active tab. Any active input box /
+/// confirm prompt draws on top.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
-    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+    let [tabs, body, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
-    match app.view {
-        View::Today => today::render(app, frame, body),
-        View::Standup => standup::render(app, frame, body),
-        View::Tasks => tasks::render(app, frame, body),
-        View::NotesList => notes::render_list(app, frame, body),
-        View::NoteDetail => notes::render_detail(app, frame, body),
+    render_tab_bar(app, frame, tabs);
+
+    if body.width >= SPLIT_MIN_WIDTH {
+        let [main, side] =
+            Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .areas(body);
+        render_main(app, frame, main, app.focus == Focus::Main);
+        notes::render_detail(app, frame, side, app.focus == Focus::Side);
+    } else {
+        // narrow fallback: only the focused pane, full width
+        match app.focus {
+            Focus::Main => render_main(app, frame, body, true),
+            Focus::Side => notes::render_detail(app, frame, body, true),
+        }
     }
 
     render_footer(app, frame, footer);
@@ -36,6 +54,36 @@ pub fn draw(app: &App, frame: &mut Frame) {
         Mode::ConfirmDelete => render_confirm(frame, area),
         Mode::Normal => {}
     }
+}
+
+/// Dispatch the main pane to the active tab's view.
+fn render_main(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+    match app.tab {
+        Tab::Today => today::render(app, frame, area, focused),
+        Tab::Standup => standup::render(app, frame, area, focused),
+        Tab::Tasks => tasks::render(app, frame, area, focused),
+        Tab::Notes => notes::render_list(app, frame, area, focused),
+    }
+}
+
+fn render_tab_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let labels = [
+        (Tab::Today, "[1] Today"),
+        (Tab::Standup, "[2] Standup"),
+        (Tab::Tasks, "[3] Tasks"),
+        (Tab::Notes, "[4] Notes"),
+    ];
+    let mut spans = vec![Span::raw(" ")];
+    for (tab, label) in labels {
+        let style = if app.tab == tab {
+            header_style()
+        } else {
+            dim_style()
+        };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw("  "));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ---- shared styling helpers -----------------------------------------------
@@ -52,6 +100,16 @@ pub(super) fn header_style() -> Style {
     Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD)
+}
+
+/// Bordered pane block: the focused pane gets the highlighted border.
+pub(super) fn pane_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
+    let block = Block::default().borders(Borders::ALL).title(title);
+    if focused {
+        block.border_style(header_style())
+    } else {
+        block
+    }
 }
 
 fn status_marker(status: Status) -> &'static str {
@@ -114,23 +172,26 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     let hints = match &app.mode {
         Mode::Editing(_) => "enter save · esc cancel".to_string(),
         Mode::ConfirmDelete => "delete? y / n".to_string(),
-        Mode::Normal => match app.view {
-            View::Today => {
-                "a add · space done · b block · e edit · d due · D del · s standup · t tasks · n notes · q quit"
+        Mode::Normal => match app.focus {
+            Focus::Side => {
+                "a add · e edit · D del · E editor · [/] note · tab main · 1-4 tabs · q quit"
                     .to_string()
             }
-            View::Tasks => format!(
-                "a add · space done · b block · e edit · d due · D del · / filter · c cat[{}] · p proj[{}] · q quit",
-                app.category_filter_label(),
-                app.project_filter_label()
-            ),
-            View::Standup => "s standup · t tasks · n notes · g today · q quit".to_string(),
-            View::NotesList => {
-                "enter open · N new · j/k move · s/t/g switch · q quit".to_string()
-            }
-            View::NoteDetail => {
-                "a add · e edit · D del · E editor · j/k move · esc back".to_string()
-            }
+            Focus::Main => match app.tab {
+                Tab::Today => {
+                    "a add · space done · b block · e edit · d due · D del · tab notes · 1-4 tabs · q quit"
+                        .to_string()
+                }
+                Tab::Tasks => format!(
+                    "a add · space done · b block · e edit · d due · D del · / filter · c cat[{}] · p proj[{}] · tab notes · q quit",
+                    app.category_filter_label(),
+                    app.project_filter_label()
+                ),
+                Tab::Standup => "tab notes · 1-4 tabs · q quit".to_string(),
+                Tab::Notes => {
+                    "enter open · N new · j/k move · tab detail · 1-4 tabs · q quit".to_string()
+                }
+            },
         },
     };
 

@@ -54,6 +54,12 @@ impl Store {
         self.dir.join("config.yaml")
     }
 
+    /// Cross-session TUI state (`state.json`): currently just the
+    /// last-opened note slug.
+    pub fn state_path(&self) -> PathBuf {
+        self.dir.join("state.json")
+    }
+
     /// Legacy daily-notes directory, imported by `wl import-legacy`.
     pub fn daily_notes_dir(&self) -> PathBuf {
         self.dir.join("daily_notes")

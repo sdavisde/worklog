@@ -3,13 +3,13 @@
 
 use crate::model::Task;
 use crate::tui::app::App;
-use crate::tui::views::{completed_line, dim_style, header_style, task_line};
+use crate::tui::views::{completed_line, dim_style, header_style, pane_block, task_line};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
-pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let report = &app.standup;
     let mut lines: Vec<Line> = Vec::new();
 
@@ -27,7 +27,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     lines.push(Line::from(Span::styled("Blocked", header_style())));
     push_group(&mut lines, &report.blocked, false, app);
 
-    let para = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Standup"));
+    let para = Paragraph::new(lines).block(pane_block("Standup", focused));
     frame.render_widget(para, area);
 }
 

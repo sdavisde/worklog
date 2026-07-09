@@ -1,13 +1,13 @@
 //! Tasks view: the full active list with text/category/project filters.
 
 use crate::tui::app::App;
-use crate::tui::views::{selection_style, task_line};
+use crate::tui::views::{pane_block, selection_style, task_line};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
+use ratatui::widgets::{List, ListItem, ListState};
 
-pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let tasks = app.tasks_filtered();
 
     let title = format!(
@@ -31,12 +31,12 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     };
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(pane_block(title, focused))
         .highlight_style(selection_style())
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
-    if !tasks.is_empty() {
+    if focused && !tasks.is_empty() {
         state.select(Some(app.tasks_sel));
     }
     frame.render_stateful_widget(list, area, &mut state);
