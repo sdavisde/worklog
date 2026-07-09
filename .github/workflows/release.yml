@@ -104,10 +104,6 @@ jobs:
           class Wl < Formula
             desc "Keyboard-first worklog TUI"
             homepage "https://github.com/sdavisde/worklog"
-            version "__VERSION__"
-
-            # The old worklog-cli tap also installs a `wl` binary.
-            conflicts_with "worklog-cli", because: "both install a `wl` binary"
 
             on_macos do
               on_arm do
