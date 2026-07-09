@@ -15,6 +15,7 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 serde_norway = "0.9"
 color-eyre = "0.6"
+ratatui-textarea = { version = "0.9", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

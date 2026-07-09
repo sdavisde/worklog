@@ -9,6 +9,7 @@ mod today;
 
 use crate::model::{Status, Task};
 use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab};
+use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit, VimMode};
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -51,7 +52,8 @@ pub fn draw(app: &App, frame: &mut Frame) {
     render_footer(app, frame, footer);
 
     match &app.mode {
-        Mode::Editing(editing) => render_input(app, editing, frame, area),
+        Mode::Editing(editing) => render_input(editing, frame, area),
+        Mode::TextEdit(te) => render_textedit(app, te, frame, area),
         Mode::CategoryPicker(picker) => render_category_picker(picker, frame, area),
         Mode::NotePicker { selected } => render_note_picker(app, *selected, frame, area),
         Mode::ConfirmDelete => render_confirm(frame, area),
@@ -249,13 +251,14 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 /// list, so a cramped footer only has to advertise it.
 fn footer_hints(app: &App, width: u16) -> String {
     match &app.mode {
-        Mode::Editing(_) => {
-            if app.editing_suggestion().is_some() {
-                "tab complete · enter save · esc cancel".to_string()
-            } else {
-                "enter save · esc cancel".to_string()
+        Mode::Editing(_) => "enter save · esc cancel".to_string(),
+        Mode::TextEdit(te) => match te.vim {
+            VimMode::Insert if app.editing_suggestion().is_some() => {
+                "enter save · esc normal-mode · tab complete · ctrl+e editor".to_string()
             }
-        }
+            VimMode::Insert => "enter save · esc normal-mode · ctrl+e editor".to_string(),
+            VimMode::Normal => "enter save · esc cancel · i insert · ctrl+e editor".to_string(),
+        },
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
         Mode::ConfirmDelete => "delete? y / n".to_string(),
@@ -321,7 +324,9 @@ fn input_label(purpose: &EditPurpose) -> &'static str {
     }
 }
 
-fn render_input(app: &App, editing: &Editing, frame: &mut Frame, area: Rect) {
+/// The lightweight single-line input (filter and due date): a 1-row clipping
+/// box with a terminal cursor. Content edits use [`render_textedit`] instead.
+fn render_input(editing: &Editing, frame: &mut Frame, area: Rect) {
     let rect = centered_rect(area, 60, 3);
     frame.render_widget(Clear, rect);
     let block = Block::default()
@@ -330,20 +335,72 @@ fn render_input(app: &App, editing: &Editing, frame: &mut Frame, area: Rect) {
         .border_style(header_style());
     let inner_width = rect.width.saturating_sub(2);
 
-    // Ghost text: the remainder of the best @category/#project completion is
-    // rendered dimmed at the cursor; <tab> accepts it (see `App::handle_key`).
-    let before: String = editing.buffer.chars().take(editing.cursor).collect();
-    let after: String = editing.buffer.chars().skip(editing.cursor).collect();
-    let mut spans = vec![Span::raw(before)];
-    if let Some(suggestion) = app.editing_suggestion() {
-        spans.push(Span::styled(suggestion.remainder, dim_style()));
-    }
-    spans.push(Span::raw(after));
-    let para = Paragraph::new(Line::from(spans)).block(block);
+    let para = Paragraph::new(Line::from(Span::raw(editing.buffer.clone()))).block(block);
     frame.render_widget(para, rect);
 
     let cursor_col = (editing.cursor as u16).min(inner_width.saturating_sub(1));
     frame.set_cursor_position((rect.x + 1 + cursor_col, rect.y + 1));
+}
+
+/// The vim edit modal: a soft-wrapping textarea whose height tracks the
+/// wrapped content (1..=[`MAX_TEXT_ROWS`] text rows, scrolling inside past
+/// the cap), with the vim mode shown in the bottom border. The ghost
+/// `@category`/`#project` completion remainder is overlaid dimmed at the
+/// cursor; its first char keeps the reversed cursor block visible.
+fn render_textedit(app: &App, te: &TextEdit, frame: &mut Frame, area: Rect) {
+    let [column] = Layout::horizontal([Constraint::Percentage(60)])
+        .flex(Flex::Center)
+        .areas(area);
+    let inner_width = column.width.saturating_sub(2);
+    let rows = te.wrapped_rows(inner_width);
+    let rect = centered_rect(area, 60, (rows + 2).min(area.height));
+    frame.render_widget(Clear, rect);
+
+    let (mode_label, mode_style) = match te.vim {
+        VimMode::Insert => (
+            " INSERT ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        VimMode::Normal => (
+            " NORMAL ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(input_label(&te.purpose))
+        .title_bottom(Line::from(Span::styled(mode_label, mode_style)))
+        .border_style(header_style());
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(te.textarea(), inner);
+
+    // `rows < MAX_TEXT_ROWS` guarantees the widget is not scrolled, so the
+    // cursor's wrapped screen position maps 1:1 onto the inner rect.
+    if let Some(suggestion) = app.editing_suggestion()
+        && rows < MAX_TEXT_ROWS
+    {
+        let (row, col) = te.screen_pos();
+        let x = inner.x.saturating_add(col as u16);
+        let y = inner.y.saturating_add(row as u16);
+        if x < inner.right() && y < inner.bottom() {
+            let mut chars = suggestion.remainder.chars();
+            let first: String = chars.by_ref().take(1).collect();
+            let rest: String = chars.collect();
+            let width = (suggestion.remainder.chars().count() as u16).min(inner.right() - x);
+            let ghost = Line::from(vec![
+                Span::styled(first, dim_style().add_modifier(Modifier::REVERSED)),
+                Span::styled(rest, dim_style()),
+            ]);
+            frame.render_widget(Paragraph::new(ghost), Rect::new(x, y, width, 1));
+        }
+    }
 }
 
 fn render_category_picker(picker: &CategoryPicker, frame: &mut Frame, area: Rect) {
@@ -461,7 +518,8 @@ fn render_help(frame: &mut Frame, area: Rect) {
         (
             "Editing",
             &[
-                "enter save · esc cancel",
+                "insert mode: enter save · esc to normal mode · ctrl+e $EDITOR",
+                "normal mode: h l w b e 0 ^ $ f t · d c y x p · u undo · esc cancel",
                 "tab accept @category/#project completion (add task)",
             ],
         ),

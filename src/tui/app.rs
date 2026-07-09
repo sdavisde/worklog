@@ -13,6 +13,7 @@ use crate::notes::{Body, Line, NoteDoc, NotesStore};
 use crate::standup::{StandupReport, build_report};
 use crate::store::Store;
 use crate::tui::editor;
+use crate::tui::textedit::{Outcome, TextEdit, VimMode};
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
@@ -158,33 +159,17 @@ impl Editing {
             self.cursor += 1;
         }
     }
-
-    /// Accept an inline completion: replace the typed token text with the
-    /// candidate's canonical spelling (case-insensitive matches must land on
-    /// the exact category/project name, since `parse_task_input` compares
-    /// exactly), then leave the cursor past a trailing space so the next word
-    /// can start immediately.
-    fn accept_suggestion(&mut self, suggestion: &TokenSuggestion) {
-        let start = self.byte_at(suggestion.text_start);
-        let end = self.byte_at(self.cursor);
-        self.buffer.replace_range(start..end, &suggestion.candidate);
-        self.cursor = suggestion.text_start + suggestion.candidate.chars().count();
-        if self.cursor == self.buffer.chars().count() {
-            self.buffer.push(' ');
-            self.cursor += 1;
-        } else if self.buffer.chars().nth(self.cursor) == Some(' ') {
-            self.cursor += 1;
-        }
-    }
 }
 
-/// Input mode: normal navigation, an active input box, a closed-list picker
-/// (task category, or the `'` note switcher), a y/n confirm, or the `?`
-/// keybinds overlay.
+/// Input mode: normal navigation, the lightweight single-line input (filter
+/// and due date), the vim edit modal (all content edits), a closed-list
+/// picker (task category, or the `'` note switcher), a y/n confirm, or the
+/// `?` keybinds overlay.
 #[derive(Debug, Clone)]
 pub enum Mode {
     Normal,
     Editing(Editing),
+    TextEdit(Box<TextEdit>),
     CategoryPicker(CategoryPicker),
     /// `'`: jump the side pane to any note; the highlighted index points
     /// into `notes_list`.
@@ -229,6 +214,17 @@ impl NoteRow {
     }
 }
 
+/// Pending `$EDITOR` escape hatch, run by the event loop between frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorRequest {
+    /// `E` on a note row: open the note file, optionally jumping to the
+    /// selected row's 1-based file line.
+    NoteFile { path: PathBuf, line: Option<usize> },
+    /// `ctrl+e` in the edit modal: round-trip the buffer through a temp
+    /// file, then put the (joined, trimmed) result back into the modal.
+    ModalBuffer { path: PathBuf },
+}
+
 /// A note doc as shown in the Notes tab's list: title + total item count.
 #[derive(Debug, Clone)]
 pub struct NoteSummary {
@@ -265,9 +261,8 @@ pub struct App {
     pub proj_filter: Option<usize>,
 
     pub footer_msg: Option<String>,
-    /// Pending `$EDITOR` escape hatch: the file to open and, when the
-    /// selected row maps to a file line, the 1-based line to jump to.
-    pub editor_request: Option<(PathBuf, Option<usize>)>,
+    /// Pending `$EDITOR` escape hatch (see [`EditorRequest`]).
+    pub editor_request: Option<EditorRequest>,
     pub should_quit: bool,
 
     pub today: NaiveDate,
@@ -425,18 +420,23 @@ impl App {
     }
 
     /// Inline ghost-text completion for the `@category`/`#project` token at
-    /// the add-task input's cursor, if one applies. `None` in every other
+    /// the add-task modal's cursor, if one applies. `None` in every other
     /// mode/purpose: editing an existing task's text does not re-parse
-    /// tokens (see [`EditPurpose::EditTask`] in `commit_editing`), so
-    /// offering completions there would suggest behavior that doesn't exist.
+    /// tokens (see [`EditPurpose::EditTask`] in `commit_edit`), so offering
+    /// completions there would suggest behavior that doesn't exist. Normal
+    /// mode gets no ghost either — `tab` only completes while inserting.
     pub fn editing_suggestion(&self) -> Option<TokenSuggestion> {
         match &self.mode {
-            Mode::Editing(e) if e.purpose == EditPurpose::AddTask => suggest_token_completion(
-                &e.buffer,
-                e.cursor,
-                &self.config.categories,
-                &self.project_candidates(),
-            ),
+            Mode::TextEdit(te)
+                if te.purpose == EditPurpose::AddTask && te.vim == VimMode::Insert =>
+            {
+                suggest_token_completion(
+                    te.text(),
+                    te.cursor_col(),
+                    &self.config.categories,
+                    &self.project_candidates(),
+                )
+            }
             _ => None,
         }
     }
@@ -645,6 +645,7 @@ impl App {
         self.footer_msg = None;
         match self.mode {
             Mode::Editing(_) => self.handle_editing_key(key)?,
+            Mode::TextEdit(_) => self.handle_textedit_key(key)?,
             Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
             Mode::NotePicker { .. } => self.handle_note_picker_key(key)?,
             Mode::ConfirmDelete => self.handle_confirm_key(key)?,
@@ -697,7 +698,10 @@ impl App {
             // (`'` — jump to a note, vim-mark style; `f` stays free for a
             // future find/filter), and keybinds overlay
             KeyCode::Char('N') => {
-                self.mode = Mode::Editing(Editing::new(EditPurpose::NewNoteTitle, String::new()));
+                self.mode = Mode::TextEdit(Box::new(TextEdit::new(
+                    EditPurpose::NewNoteTitle,
+                    String::new(),
+                )));
             }
             KeyCode::Char('\'') => {
                 if self.notes_list.is_empty() {
@@ -731,7 +735,8 @@ impl App {
     fn handle_task_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Char('a') => {
-                self.mode = Mode::Editing(Editing::new(EditPurpose::AddTask, String::new()));
+                self.mode =
+                    Mode::TextEdit(Box::new(TextEdit::new(EditPurpose::AddTask, String::new())));
             }
             KeyCode::Char(' ') | KeyCode::Char('x') => {
                 if let Some(task) = self.selected_active_task() {
@@ -755,10 +760,10 @@ impl App {
             }
             KeyCode::Char('e') => {
                 if let Some(sel) = self.selected_active_task() {
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::EditTask { id: sel.id.clone() },
                         sel.text.clone(),
-                    ));
+                    )));
                 }
             }
             KeyCode::Char('C') => {
@@ -896,10 +901,10 @@ impl App {
             KeyCode::Char(']') => self.cycle_note(1)?,
             KeyCode::Char('a') => {
                 let heading = self.current_heading();
-                self.mode = Mode::Editing(Editing::new(
+                self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                     EditPurpose::AddNoteItem { heading },
                     String::new(),
-                ));
+                )));
             }
             KeyCode::Char('o') => {
                 if let Some(row) = self.selected_note_row() {
@@ -911,21 +916,21 @@ impl App {
                         } => (heading, Some(item_index)),
                         NoteRow::Heading { heading, .. } => (heading, None),
                     };
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::InsertNoteItem {
                             heading,
                             after_item,
                         },
                         String::new(),
-                    ));
+                    )));
                 }
             }
             KeyCode::Char('A') => {
                 let after_section = self.selected_note_row().map(|r| r.section_index());
-                self.mode = Mode::Editing(Editing::new(
+                self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                     EditPurpose::NewNoteSection { after_section },
                     String::new(),
-                ));
+                )));
             }
             KeyCode::Char('r') => {
                 if let Some(doc) = &self.current_note {
@@ -944,13 +949,13 @@ impl App {
                     text,
                     ..
                 }) => {
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::EditNoteItem {
                             heading,
                             item_index,
                         },
                         text,
-                    ));
+                    )));
                 }
                 Some(NoteRow::Heading { .. }) => {
                     self.footer_msg = Some("select an item to edit".to_string());
@@ -967,7 +972,10 @@ impl App {
             KeyCode::Char('E') => {
                 if let Some(doc) = &self.current_note {
                     let line = self.selected_row_editor_line();
-                    self.editor_request = Some((self.notes.path_for(&doc.slug), line));
+                    self.editor_request = Some(EditorRequest::NoteFile {
+                        path: self.notes.path_for(&doc.slug),
+                        line,
+                    });
                 }
             }
             _ => {}
@@ -1045,16 +1053,6 @@ impl App {
                     e.right();
                 }
             }
-            // Accept the inline @category/#project completion. Tab is
-            // otherwise unbound while editing (the Normal-mode pane toggle
-            // does not apply here), so no-suggestion Tab stays a no-op.
-            KeyCode::Tab => {
-                if let Some(suggestion) = self.editing_suggestion()
-                    && let Mode::Editing(e) = &mut self.mode
-                {
-                    e.accept_suggestion(&suggestion);
-                }
-            }
             _ => {}
         }
         Ok(())
@@ -1082,17 +1080,75 @@ impl App {
         self.mode = Mode::Normal;
     }
 
+    /// The vim edit modal's key handler: `tab` accepts the inline completion
+    /// (insert mode, add-task only — `editing_suggestion` is `None`
+    /// otherwise), everything else goes to the modal's own state machine and
+    /// its [`Outcome`] decides what happens app-side.
+    fn handle_textedit_key(&mut self, key: KeyEvent) -> Result<()> {
+        if key.code == KeyCode::Tab {
+            let suggestion = self.editing_suggestion();
+            if let Mode::TextEdit(te) = &mut self.mode
+                && let Some(suggestion) = suggestion
+            {
+                te.accept_suggestion(&suggestion);
+            }
+            return Ok(());
+        }
+        let outcome = match &mut self.mode {
+            Mode::TextEdit(te) => te.handle_key(key),
+            _ => return Ok(()),
+        };
+        match outcome {
+            Outcome::Consumed => {}
+            Outcome::Cancel => self.mode = Mode::Normal,
+            Outcome::Submit => self.commit_textedit()?,
+            Outcome::OpenEditor => self.request_modal_editor(),
+        }
+        Ok(())
+    }
+
+    /// Queue the `ctrl+e` escape hatch: seed a temp file with the modal
+    /// buffer and let the event loop run `$EDITOR` on it.
+    fn request_modal_editor(&mut self) {
+        let Mode::TextEdit(te) = &self.mode else {
+            return;
+        };
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("wl-edit-{}-{nanos}.md", std::process::id()));
+        match std::fs::write(&path, te.text()) {
+            Ok(()) => self.editor_request = Some(EditorRequest::ModalBuffer { path }),
+            Err(e) => self.footer_msg = Some(format!("failed to write temp file: {e}")),
+        }
+    }
+
     fn commit_editing(&mut self) -> Result<()> {
         let editing = match &self.mode {
             Mode::Editing(e) => e.clone(),
             _ => return Ok(()),
         };
-        let text = editing.buffer.trim().to_string();
-        match editing.purpose {
+        self.commit_edit(editing.purpose, editing.buffer)
+    }
+
+    fn commit_textedit(&mut self) -> Result<()> {
+        let (purpose, raw) = match &self.mode {
+            Mode::TextEdit(te) => (te.purpose.clone(), te.text().to_string()),
+            _ => return Ok(()),
+        };
+        self.commit_edit(purpose, raw)
+    }
+
+    /// Shared persistence for both input paths: what committing `raw` under
+    /// each purpose means. Empty input is a silent no-op exit everywhere.
+    fn commit_edit(&mut self, purpose: EditPurpose, raw: String) -> Result<()> {
+        let text = raw.trim().to_string();
+        match purpose {
             EditPurpose::AddTask => {
                 if !text.is_empty() {
                     let (task_text, category, project) =
-                        parse_task_input(&editing.buffer, &self.config.categories);
+                        parse_task_input(&raw, &self.config.categories);
                     let task = Task::new(task_text, category, project, None);
                     self.store.add_task(task)?;
                     self.reload()?;
@@ -1116,7 +1172,7 @@ impl App {
                 self.mode = Mode::Normal;
             }
             EditPurpose::Filter => {
-                self.filter_text = editing.buffer.clone();
+                self.filter_text = raw;
                 self.tasks_sel = 0;
                 self.mode = Mode::Normal;
             }
@@ -1369,16 +1425,38 @@ impl App {
     }
 
     /// Run the pending `$EDITOR` request (if any) using `editor` as the
-    /// command, then reload the doc from disk. Terminal suspend/resume is the
-    /// caller's responsibility; this half is TTY-free so it is unit testable.
+    /// command. Note files are reloaded from disk afterwards; a modal-buffer
+    /// round-trip reads the temp file back into the still-open modal.
+    /// Terminal suspend/resume is the caller's responsibility; this half is
+    /// TTY-free so it is unit testable.
     pub fn run_editor(&mut self, editor: &str) -> Result<()> {
-        if let Some((path, line)) = self.editor_request.take() {
-            match editor::run_editor(editor, &path, line) {
-                Ok(status) if status.success() => {}
-                Ok(_) => self.footer_msg = Some("editor exited with an error".to_string()),
-                Err(e) => self.footer_msg = Some(format!("failed to launch editor: {e}")),
+        match self.editor_request.take() {
+            Some(EditorRequest::NoteFile { path, line }) => {
+                match editor::run_editor(editor, &path, line) {
+                    Ok(status) if status.success() => {}
+                    Ok(_) => self.footer_msg = Some("editor exited with an error".to_string()),
+                    Err(e) => self.footer_msg = Some(format!("failed to launch editor: {e}")),
+                }
+                self.reload_current_note()?;
             }
-            self.reload_current_note()?;
+            Some(EditorRequest::ModalBuffer { path }) => {
+                match editor::run_editor(editor, &path, None) {
+                    Ok(status) if status.success() => match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            if let Mode::TextEdit(te) = &mut self.mode {
+                                te.set_text(&content);
+                            }
+                        }
+                        Err(e) => {
+                            self.footer_msg = Some(format!("failed to read edited text: {e}"));
+                        }
+                    },
+                    Ok(_) => self.footer_msg = Some("editor exited with an error".to_string()),
+                    Err(e) => self.footer_msg = Some(format!("failed to launch editor: {e}")),
+                }
+                let _ = std::fs::remove_file(&path);
+            }
+            None => {}
         }
         Ok(())
     }

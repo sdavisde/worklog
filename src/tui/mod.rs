@@ -4,6 +4,7 @@
 
 mod app;
 mod editor;
+mod textedit;
 mod views;
 
 #[cfg(test)]
