@@ -1132,3 +1132,426 @@ fn editor_request_set_and_roundtrip_reloads_doc() {
         "doc reloaded with stub edit: {items:?}"
     );
 }
+
+// ---- note switcher (`f`) ----------------------------------------------------
+
+#[test]
+fn quote_opens_note_picker_preselecting_current_note() {
+    let dir = TempDir::new().unwrap();
+    let alpha = seed_note(dir.path(), "Alpha note", &["a"]);
+    let beta = seed_note(dir.path(), "Beta note", &["b"]);
+
+    let mut app = app_in(dir.path());
+    assert_eq!(app.current_note.as_ref().unwrap().slug, alpha);
+
+    // ' works globally (from the Today tab), pre-highlighting the open note
+    press(&mut app, KeyCode::Char('\''));
+    assert!(
+        matches!(app.mode, Mode::NotePicker { selected: 0 }),
+        "picker opens on the current note"
+    );
+
+    // enter is a deliberate open: side pane + persistence, focus untouched
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.current_note.as_ref().unwrap().slug, beta);
+    assert_eq!(app.notes_sel, 1, "note cycling position follows");
+    assert_eq!(app.focus, Focus::Main, "picker does not steal focus");
+    let state = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+    assert!(state.contains(&beta), "picker open persisted as last note");
+}
+
+#[test]
+fn note_picker_esc_cancels_without_switching() {
+    let dir = TempDir::new().unwrap();
+    let alpha = seed_note(dir.path(), "Alpha note", &["a"]);
+    seed_note(dir.path(), "Beta note", &["b"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('\''));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Esc);
+
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(
+        app.current_note.as_ref().unwrap().slug,
+        alpha,
+        "note unchanged on cancel"
+    );
+    let state = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+    assert!(state.contains(&alpha), "persistence unchanged on cancel");
+}
+
+#[test]
+fn quote_with_no_notes_shows_footer_notice() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('\''));
+    assert!(matches!(app.mode, Mode::Normal), "no picker without notes");
+    assert!(app.footer_msg.is_some(), "footer explains why");
+}
+
+#[test]
+fn note_picker_renders_titles_and_item_counts() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["one"]);
+    seed_note(dir.path(), "Beta note", &["one", "two"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('\''));
+    let out = render(&app);
+    assert!(out.contains("Open note"), "picker title rendered");
+    assert!(out.contains("Alpha note"), "titles listed");
+    assert!(out.contains("(1 item)"), "singular count");
+    assert!(out.contains("(2 items)"), "plural count");
+}
+
+// ---- side-pane wrapping & inline markdown -----------------------------------
+
+/// Flatten a wrapped line back to its display text.
+fn flat(line: &ratatui::text::Line<'_>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+#[test]
+fn wrap_note_item_breaks_at_spaces_and_indents_under_text() {
+    let lines = views::notes::wrap_note_item("alpha beta gamma delta", 14);
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    // width 14 minus the 4-col "  - " prefix leaves 10 text columns
+    assert_eq!(rendered, vec!["  - alpha beta", "    gamma", "    delta"]);
+}
+
+#[test]
+fn wrap_note_item_hard_breaks_single_overlong_word() {
+    let lines = views::notes::wrap_note_item("abcdefghijkl", 8);
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    assert_eq!(rendered, vec!["  - abcd", "    efgh", "    ijkl"]);
+}
+
+#[test]
+fn wrap_note_item_styles_inline_markdown() {
+    use ratatui::style::{Color, Modifier};
+    let lines = views::notes::wrap_note_item("has **bold** and `code` [docs](https://x.dev)", 60);
+    assert_eq!(lines.len(), 1);
+    let line = &lines[0];
+    assert_eq!(flat(line), "  - has bold and code docs", "markers consumed");
+    assert!(
+        line.spans
+            .iter()
+            .any(|s| s.content == "bold" && s.style.add_modifier.contains(Modifier::BOLD)),
+        "bold run styled"
+    );
+    assert!(
+        line.spans
+            .iter()
+            .any(|s| s.content == "code" && s.style.fg == Some(Color::Yellow)),
+        "code run styled distinctly"
+    );
+    assert!(
+        line.spans
+            .iter()
+            .any(|s| s.content == "docs" && s.style.add_modifier.contains(Modifier::UNDERLINED)),
+        "link text styled"
+    );
+}
+
+#[test]
+fn wrap_note_item_unclosed_markers_render_literally() {
+    let lines = views::notes::wrap_note_item("start **unclosed and `dangling", 60);
+    assert_eq!(flat(&lines[0]), "  - start **unclosed and `dangling");
+}
+
+#[test]
+fn long_note_items_wrap_in_side_pane_as_one_selectable_row() {
+    let dir = TempDir::new().unwrap();
+    seed_note(
+        dir.path(),
+        "Wrappy",
+        &["aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll"],
+    );
+
+    let app = app_in(dir.path());
+    let out = render(&app);
+    assert!(
+        out.contains("│  - aaaa"),
+        "item starts with the dash prefix"
+    );
+    assert!(
+        out.contains("│    iiii") || out.contains("│    jjjj") || out.contains("│    hhhh"),
+        "continuation line aligned under the text: {out}"
+    );
+    // wrapped or not, the item is still exactly one selectable row
+    assert_eq!(app.note_rows().len(), 2, "heading + one item row");
+}
+
+// ---- narrow-width degradation ------------------------------------------------
+
+#[test]
+fn footer_hints_pick_richest_tier_that_fits() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+
+    // Today's full footer is ~77 cols; Tasks' is ~90.
+    let full = render_sized(&app, 120, 40);
+    assert!(full.contains("b block"), "full footer when it fits");
+    assert!(full.contains("' note"), "note switcher advertised");
+
+    let medium = render_sized(&app, 70, 40);
+    assert!(!medium.contains("b block"), "medium tier drops extras");
+    assert!(medium.contains("a add"), "medium keeps high-value hints");
+    assert!(medium.contains("? keys"), "help pointer always present");
+
+    let minimal = render_sized(&app, 40, 40);
+    assert!(
+        !minimal.contains("a add"),
+        "minimal footer when medium overflows"
+    );
+    assert!(minimal.contains("? keys"), "help pointer survives");
+    assert!(minimal.contains("q quit"), "quit hint survives");
+
+    // Fit-based, not fixed-breakpoint: at 85 cols the short Today footer
+    // still fits in full while the longer Tasks footer steps down to medium.
+    let today_85 = render_sized(&app, 85, 40);
+    assert!(
+        today_85.contains("b block"),
+        "Today keeps its full footer at 85 cols"
+    );
+    app.tab = Tab::Tasks;
+    let tasks_85 = render_sized(&app, 85, 40);
+    assert!(
+        !tasks_85.contains("c cat["),
+        "Tasks' longer full footer does not fit at 85 cols"
+    );
+    assert!(
+        tasks_85.contains("v view[Open]"),
+        "Tasks still gets its medium footer, not the minimal one"
+    );
+}
+
+#[test]
+fn tasks_title_drops_filters_when_they_do_not_fit() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("t", "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    let wide = render_sized(&app, 120, 40);
+    assert!(wide.contains("cat:all"), "full title when roomy");
+
+    let narrow = render_sized(&app, 30, 40);
+    assert!(
+        narrow.contains("Tasks — Open"),
+        "short title keeps the view"
+    );
+    assert!(!narrow.contains("cat:"), "filters dropped when tight");
+}
+
+#[test]
+fn overlong_task_rows_truncate_with_ellipsis() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let long_text = "alpha ".repeat(20);
+    store
+        .save_tasks(&[task(long_text.trim(), "engineering", Status::Open, None)])
+        .unwrap();
+
+    let app = app_in(dir.path());
+    let out = render_sized(&app, 60, 40);
+    assert!(out.contains("…"), "row ellipsis-truncated");
+    assert!(
+        !out.contains("@engineering"),
+        "clipped tail (category) is gone rather than wrapped"
+    );
+}
+
+#[test]
+fn help_overlay_shrinks_and_wraps_at_narrow_width() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('?'));
+
+    for width in [100u16, 80, 60] {
+        let out = render_sized(&app, width, 40);
+        assert!(out.contains("Keybinds"), "overlay renders at {width} cols");
+        assert!(out.contains("Global"), "groups render at {width} cols");
+    }
+}
+
+#[test]
+fn tab_bar_compacts_below_47_cols() {
+    let dir = TempDir::new().unwrap();
+    let app = app_in(dir.path());
+
+    let wide = render_sized(&app, 60, 40);
+    assert!(wide.contains("[1] Today"), "bracketed labels when roomy");
+
+    let narrow = render_sized(&app, 40, 40);
+    assert!(!narrow.contains("[1] Today"), "brackets dropped when tight");
+    assert!(narrow.contains("1 Today"), "compact labels still labeled");
+}
+
+// ---- note rename (`r`) & reorder (`J`/`K`) -----------------------------------
+
+#[test]
+fn r_renames_note_from_list_keeping_slug() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["item"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+    press(&mut app, KeyCode::Char('r'));
+    match &app.mode {
+        Mode::Editing(e) => assert_eq!(e.buffer, "Alpha note", "prefilled with current title"),
+        other => panic!("expected rename input, got {other:?}"),
+    }
+    for _ in 0.."Alpha note".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_str(&mut app, "Alpha renamed");
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(
+        app.notes_list[0].title, "Alpha renamed",
+        "list shows new title"
+    );
+    assert_eq!(app.notes_list[0].slug, "alpha-note", "slug unchanged");
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load("alpha-note")
+        .unwrap();
+    assert_eq!(reloaded.frontmatter.title, "Alpha renamed", "title on disk");
+
+    // the stable slug means last-note restoration still resolves
+    let reopened = app_in(dir.path());
+    let current = reopened.current_note.as_ref().unwrap();
+    assert_eq!(current.slug, "alpha-note");
+    assert_eq!(current.frontmatter.title, "Alpha renamed");
+}
+
+#[test]
+fn r_renames_current_note_from_side_pane() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Side title", &["item"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Side);
+    press(&mut app, KeyCode::Char('r'));
+    for _ in 0.."Side title".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_str(&mut app, "Better title");
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(
+        app.current_note.as_ref().unwrap().frontmatter.title,
+        "Better title",
+        "open note reflects the rename"
+    );
+    assert_eq!(app.current_note.as_ref().unwrap().slug, "side-title");
+}
+
+#[test]
+fn reorder_persists_and_drives_picker_and_cycling() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["a"]);
+    seed_note(dir.path(), "Beta note", &["b"]);
+    seed_note(dir.path(), "Gamma note", &["g"]);
+    let slugs =
+        |app: &App| -> Vec<String> { app.notes_list.iter().map(|s| s.slug.clone()).collect() };
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+    assert_eq!(slugs(&app), ["alpha-note", "beta-note", "gamma-note"]);
+
+    // K at the top is a no-op; J swaps down and the selection follows
+    press(&mut app, KeyCode::Char('K'));
+    assert_eq!(slugs(&app), ["alpha-note", "beta-note", "gamma-note"]);
+    press(&mut app, KeyCode::Char('J'));
+    assert_eq!(slugs(&app), ["beta-note", "alpha-note", "gamma-note"]);
+    assert_eq!(app.notes_sel, 1, "selection follows the moved note");
+    assert_eq!(
+        app.current_note.as_ref().unwrap().slug,
+        "alpha-note",
+        "preview still shows the moved note"
+    );
+
+    // the custom order survives a restart
+    let mut reopened = app_in(dir.path());
+    assert_eq!(slugs(&reopened), ["beta-note", "alpha-note", "gamma-note"]);
+
+    // [/] cycling walks the custom order, not slug order
+    reopened.tab = Tab::Today;
+    press(&mut reopened, KeyCode::Tab); // side pane; alpha (last note) is open
+    assert_eq!(reopened.current_note.as_ref().unwrap().slug, "alpha-note");
+    press(&mut reopened, KeyCode::Char(']'));
+    assert_eq!(
+        reopened.current_note.as_ref().unwrap().slug,
+        "gamma-note",
+        "next in custom order"
+    );
+    press(&mut reopened, KeyCode::Char('['));
+    press(&mut reopened, KeyCode::Char('['));
+    assert_eq!(
+        reopened.current_note.as_ref().unwrap().slug,
+        "beta-note",
+        "previous twice wraps the custom order"
+    );
+
+    // the ' picker walks the same list: top entry is now Beta
+    press(&mut reopened, KeyCode::Esc); // side -> main
+    press(&mut reopened, KeyCode::Char('\''));
+    press(&mut reopened, KeyCode::Char('k'));
+    press(&mut reopened, KeyCode::Char('k')); // to the top
+    press(&mut reopened, KeyCode::Enter);
+    assert_eq!(reopened.current_note.as_ref().unwrap().slug, "beta-note");
+}
+
+#[test]
+fn notes_missing_from_persisted_order_append_and_stale_entries_drop() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["a"]);
+    seed_note(dir.path(), "Beta note", &["b"]);
+
+    // persist a custom order: [beta, alpha]
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+    press(&mut app, KeyCode::Char('J'));
+    drop(app);
+
+    // an externally created note (slug-sorts first!) appends at the end
+    seed_note(dir.path(), "Aaa note", &["new"]);
+    let app = app_in(dir.path());
+    let slugs: Vec<&str> = app.notes_list.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, ["beta-note", "alpha-note", "aaa-note"]);
+    drop(app);
+
+    // a deleted note silently drops out; the rest keep their order
+    std::fs::remove_file(dir.path().join("notes").join("beta-note.md")).unwrap();
+    let app = app_in(dir.path());
+    let slugs: Vec<&str> = app.notes_list.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, ["alpha-note", "aaa-note"]);
+}
+
+#[test]
+fn notes_footer_and_help_advertise_rename_and_move() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Any", &["item"]);
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+
+    let out = render(&app);
+    assert!(out.contains("r rename"), "footer advertises rename");
+    assert!(out.contains("J/K move"), "footer advertises reorder");
+
+    press(&mut app, KeyCode::Char('?'));
+    let overlay = render(&app);
+    assert!(
+        overlay.contains("J/K move note up/down"),
+        "overlay notes group"
+    );
+}

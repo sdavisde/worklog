@@ -74,6 +74,12 @@ pub enum EditPurpose {
     },
     Filter,
     NewNoteTitle,
+    /// `r`: retitle the note. Only the frontmatter title changes — the slug
+    /// (and so the filename, `state.json` references, and note order) stays
+    /// stable.
+    RenameNote {
+        slug: String,
+    },
     AddNoteItem {
         heading: String,
     },
@@ -173,14 +179,14 @@ impl Editing {
 }
 
 /// Input mode: normal navigation, an active input box, a closed-list picker
-/// (task category, or the `f` note switcher), a y/n confirm, or the `?`
+/// (task category, or the `'` note switcher), a y/n confirm, or the `?`
 /// keybinds overlay.
 #[derive(Debug, Clone)]
 pub enum Mode {
     Normal,
     Editing(Editing),
     CategoryPicker(CategoryPicker),
-    /// `f`: jump the side pane to any note; the highlighted index points
+    /// `'`: jump the side pane to any note; the highlighted index points
     /// into `notes_list`.
     NotePicker {
         selected: usize,
@@ -336,6 +342,18 @@ impl App {
                 }
             })
             .collect();
+        // Apply the user's persisted note order (`J`/`K` on the Notes tab):
+        // known slugs first in that order; notes not in it (new or created
+        // externally) keep their slug-sorted order at the end; persisted
+        // slugs whose files are gone simply never match, and drop out of
+        // `state.json` on the next reorder.
+        let order = self.load_note_order();
+        self.notes_list.sort_by_key(|s| {
+            order
+                .iter()
+                .position(|o| o == &s.slug)
+                .unwrap_or(usize::MAX)
+        });
         self.clamp_selection();
         Ok(())
     }
@@ -675,12 +693,13 @@ impl App {
                 self.preview_selected_note()?;
             }
 
-            // global: new note (opens in the side pane), note switcher, and
-            // keybinds overlay
+            // global: new note (opens in the side pane), note switcher
+            // (`'` — jump to a note, vim-mark style; `f` stays free for a
+            // future find/filter), and keybinds overlay
             KeyCode::Char('N') => {
                 self.mode = Mode::Editing(Editing::new(EditPurpose::NewNoteTitle, String::new()));
             }
-            KeyCode::Char('f') => {
+            KeyCode::Char('\'') => {
                 if self.notes_list.is_empty() {
                     self.footer_msg = Some("no notes yet — press N to create one".to_string());
                 } else {
@@ -784,12 +803,48 @@ impl App {
     }
 
     fn handle_notes_list_key(&mut self, key: KeyEvent) -> Result<()> {
-        if key.code == KeyCode::Enter && self.notes_list.get(self.notes_sel).is_some() {
-            // deliberate open: focus the side pane and remember the note
-            self.open_note_at(self.notes_sel)?;
-            self.focus = Focus::Side;
+        match key.code {
+            KeyCode::Enter => {
+                if self.notes_list.get(self.notes_sel).is_some() {
+                    // deliberate open: focus the side pane and remember the note
+                    self.open_note_at(self.notes_sel)?;
+                    self.focus = Focus::Side;
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(summary) = self.notes_list.get(self.notes_sel) {
+                    self.mode = Mode::Editing(Editing::new(
+                        EditPurpose::RenameNote {
+                            slug: summary.slug.clone(),
+                        },
+                        summary.title.clone(),
+                    ));
+                }
+            }
+            // reorder: the selection follows the moved note
+            KeyCode::Char('J') => self.move_note(1),
+            KeyCode::Char('K') => self.move_note(-1),
+            _ => {}
         }
         Ok(())
+    }
+
+    /// `J`/`K`: swap the selected note with its neighbor and persist the new
+    /// order. `notes_list` is the single source of truth for note order, so
+    /// the `'` picker and `[`/`]` cycling follow automatically.
+    fn move_note(&mut self, delta: i32) {
+        let len = self.notes_list.len();
+        if len < 2 {
+            return;
+        }
+        let from = self.notes_sel;
+        let to = (from as i32 + delta).clamp(0, len as i32 - 1) as usize;
+        if from == to {
+            return;
+        }
+        self.notes_list.swap(from, to);
+        self.notes_sel = to;
+        self.persist_note_order();
     }
 
     /// Live preview for the Notes tab: mirror the list selection into the
@@ -871,6 +926,16 @@ impl App {
                     EditPurpose::NewNoteSection { after_section },
                     String::new(),
                 ));
+            }
+            KeyCode::Char('r') => {
+                if let Some(doc) = &self.current_note {
+                    self.mode = Mode::Editing(Editing::new(
+                        EditPurpose::RenameNote {
+                            slug: doc.slug.clone(),
+                        },
+                        doc.frontmatter.title.clone(),
+                    ));
+                }
             }
             KeyCode::Char('e') => match self.selected_note_row() {
                 Some(NoteRow::Item {
@@ -1069,6 +1134,18 @@ impl App {
                 }
                 self.mode = Mode::Normal;
             }
+            EditPurpose::RenameNote { slug } => {
+                if !text.is_empty() {
+                    let mut doc = self.notes.load(&slug)?;
+                    doc.frontmatter.title = text.clone();
+                    self.notes.save(&mut doc)?;
+                    if self.current_note.as_ref().map(|d| d.slug.as_str()) == Some(slug.as_str()) {
+                        self.current_note = Some(doc);
+                    }
+                    self.reload()?;
+                }
+                self.mode = Mode::Normal;
+            }
             EditPurpose::AddNoteItem { heading } => {
                 if !text.is_empty() {
                     if let Some(doc) = &mut self.current_note {
@@ -1195,7 +1272,7 @@ impl App {
         Ok(())
     }
 
-    /// The `f` note switcher: same interaction as the category picker, but
+    /// The `'` note switcher: same interaction as the category picker, but
     /// enter is a deliberate open (side pane + last-note persistence). Focus
     /// is left where it was, matching the category picker's behavior.
     fn handle_note_picker_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -1245,19 +1322,50 @@ impl App {
     // ---- cross-session UI state (state.json) -------------------------------
 
     /// Slug of the last-opened note recorded in `state.json`, if readable.
-    fn load_last_note_slug(&self) -> Option<String> {
-        let content = std::fs::read_to_string(self.store.state_path()).ok()?;
-        let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-        Some(v.get("last_note")?.as_str()?.to_string())
+    /// `state.json` as a JSON object; empty when missing or unreadable.
+    fn read_state(&self) -> serde_json::Map<String, serde_json::Value> {
+        std::fs::read_to_string(self.store.state_path())
+            .ok()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default()
     }
 
-    /// Best-effort save of the open note's slug: UI state is not worth
+    /// Best-effort merge of one key into `state.json`: UI state is not worth
     /// failing an interaction over, so write errors are ignored.
+    fn write_state_key(&self, key: &str, value: serde_json::Value) {
+        let mut state = self.read_state();
+        state.insert(key.to_string(), value);
+        let v = serde_json::Value::Object(state);
+        let _ = std::fs::write(self.store.state_path(), format!("{v}\n"));
+    }
+
+    fn load_last_note_slug(&self) -> Option<String> {
+        Some(self.read_state().get("last_note")?.as_str()?.to_string())
+    }
+
     fn persist_last_note(&self) {
         if let Some(doc) = &self.current_note {
-            let v = serde_json::json!({ "last_note": doc.slug });
-            let _ = std::fs::write(self.store.state_path(), format!("{v}\n"));
+            self.write_state_key("last_note", serde_json::json!(doc.slug));
         }
+    }
+
+    /// Slugs in the user's chosen Notes order, as persisted in `state.json`.
+    fn load_note_order(&self) -> Vec<String> {
+        self.read_state()
+            .get("note_order")
+            .and_then(|v| v.as_array().cloned())
+            .map(|a| {
+                a.into_iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn persist_note_order(&self) {
+        let slugs: Vec<&str> = self.notes_list.iter().map(|s| s.slug.as_str()).collect();
+        self.write_state_key("note_order", serde_json::json!(slugs));
     }
 
     /// Run the pending `$EDITOR` request (if any) using `editor` as the

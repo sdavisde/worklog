@@ -87,8 +87,6 @@ fn parse_checklist(trimmed: &str) -> Option<Block> {
 ///
 /// Deliberately conservative: no nesting, and any marker without a matching
 /// closer on the same line is treated as literal text.
-// Not wired into any renderer yet; kept for the upcoming styled notes view.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inline {
     Text(String),
@@ -109,7 +107,6 @@ pub enum Inline {
 /// Tokenize one line of item text into inline runs. Empty-content markers
 /// (`**` alone, ` `` ` etc.) and unclosed markers fall through as literal
 /// text rather than erroring.
-#[allow(dead_code)]
 pub fn parse_inline(input: &str) -> Vec<Inline> {
     let chars: Vec<char> = input.chars().collect();
     let mut out: Vec<Inline> = Vec::new();
@@ -182,7 +179,6 @@ pub fn parse_inline(input: &str) -> Vec<Inline> {
 }
 
 /// First index `>= from` where `seq` occurs in `chars`, if any.
-#[allow(dead_code)]
 fn find_seq(chars: &[char], from: usize, seq: &[char]) -> Option<usize> {
     if chars.len() < seq.len() {
         return None;

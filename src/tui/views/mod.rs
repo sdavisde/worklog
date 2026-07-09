@@ -118,8 +118,6 @@ pub(super) fn header_style() -> Style {
 
 /// Ellipsis-truncate a styled line to `width` columns (this app's content is
 /// ASCII-leaning, so chars ≈ columns). ratatui's `List` clips hard otherwise.
-// Not called by any view yet; kept for the in-progress truncation work.
-#[allow(dead_code)]
 pub(super) fn truncate_line(line: Line<'static>, width: usize) -> Line<'static> {
     let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
     if total <= width || width == 0 {
@@ -147,8 +145,6 @@ pub(super) fn truncate_line(line: Line<'static>, width: usize) -> Line<'static> 
 }
 
 /// Ellipsis-truncate a plain string to `width` chars (for pane titles).
-// Not called by any view yet; kept for the in-progress truncation work.
-#[allow(dead_code)]
 pub(super) fn truncate_str(s: &str, width: usize) -> String {
     if s.chars().count() <= width || width == 0 {
         return s.to_string();
@@ -245,14 +241,13 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-/// Hint line for the current mode/context, tiered by terminal width: the
-/// full bindings when roomy (>= 100 cols), a high-value subset when tight
-/// (60..100), and just the help pointer below that — the `?` overlay
-/// carries the complete list, so a cramped footer only has to advertise it.
+/// Hint line for the current mode/context. In Normal mode the tiers for the
+/// current context are measured against the actual width and the richest one
+/// that fits wins — full → medium → a bare help pointer. Fit-based (not a
+/// fixed breakpoint) so a short tab's full hints survive at widths where
+/// only the longest tab's wouldn't; the `?` overlay carries the complete
+/// list, so a cramped footer only has to advertise it.
 fn footer_hints(app: &App, width: u16) -> String {
-    const FULL_MIN: u16 = 100;
-    const COMPACT_MIN: u16 = 60;
-
     match &app.mode {
         Mode::Editing(_) => {
             if app.editing_suggestion().is_some() {
@@ -265,42 +260,48 @@ fn footer_hints(app: &App, width: u16) -> String {
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
         Mode::ConfirmDelete => "delete? y / n".to_string(),
         Mode::Help => "any key to close".to_string(),
-        Mode::Normal if width < COMPACT_MIN => "? keys · q quit".to_string(),
         Mode::Normal => {
-            let full = width >= FULL_MIN;
-            match app.focus {
-                Focus::Side if full => {
-                    "a add · o insert · e edit · D del · E editor · [/] note · f find · tab main · ? keys · q quit"
-                        .to_string()
-                }
-                Focus::Side => "a add · e edit · [/] note · ? keys · q quit".to_string(),
+            let [full, medium] = match app.focus {
+                Focus::Side => [
+                    "a add · o insert · e edit · D del · E editor · [/] note · ' note · tab main · ? keys · q quit"
+                        .to_string(),
+                    "a add · e edit · [/] note · ? keys · q quit".to_string(),
+                ],
                 Focus::Main => match app.tab {
-                    Tab::Today if full => {
-                        "a add · space done · b block · e edit · f note · tab notes · ? keys · q quit"
-                            .to_string()
-                    }
-                    Tab::Today => "a add · space done · e edit · ? keys · q quit".to_string(),
-                    Tab::Tasks if full => format!(
-                        "a add · space done · v view[{}] · / filter · c cat[{}] · p proj[{}] · ? keys · q quit",
-                        app.task_view.label(),
-                        app.category_filter_label(),
-                        app.project_filter_label()
-                    ),
-                    Tab::Tasks => format!(
-                        "a add · v view[{}] · / filter · ? keys · q quit",
-                        app.task_view.label()
-                    ),
-                    Tab::Standup if full => {
-                        "1-4 tabs · f note · tab notes · ? keys · q quit".to_string()
-                    }
-                    Tab::Standup => "1-4 tabs · ? keys · q quit".to_string(),
-                    Tab::Notes if full => {
-                        "j/k select · enter open · N new · tab side pane · ? keys · q quit"
-                            .to_string()
-                    }
-                    Tab::Notes => "enter open · N new · ? keys · q quit".to_string(),
+                    Tab::Today => [
+                        "a add · space done · b block · e edit · ' note · tab notes · ? keys · q quit"
+                            .to_string(),
+                        "a add · space done · e edit · ? keys · q quit".to_string(),
+                    ],
+                    Tab::Tasks => [
+                        format!(
+                            "a add · space done · v view[{}] · / filter · c cat[{}] · p proj[{}] · ? keys · q quit",
+                            app.task_view.label(),
+                            app.category_filter_label(),
+                            app.project_filter_label()
+                        ),
+                        format!(
+                            "a add · v view[{}] · / filter · ? keys · q quit",
+                            app.task_view.label()
+                        ),
+                    ],
+                    Tab::Standup => [
+                        "1-4 tabs · ' note · tab notes · ? keys · q quit".to_string(),
+                        "1-4 tabs · ? keys · q quit".to_string(),
+                    ],
+                    Tab::Notes => [
+                        "j/k select · enter open · r rename · J/K move · N new · tab side pane · ? keys · q quit"
+                            .to_string(),
+                        "enter open · r rename · J/K move · N new · ? keys · q quit".to_string(),
+                    ],
                 },
-            }
+            };
+            // the renderer prepends one space of padding
+            let avail = width.saturating_sub(1) as usize;
+            [full, medium]
+                .into_iter()
+                .find(|t| t.chars().count() <= avail)
+                .unwrap_or_else(|| "? keys · q quit".to_string())
         }
     }
 }
@@ -312,6 +313,7 @@ fn input_label(purpose: &EditPurpose) -> &'static str {
         EditPurpose::DueDate { .. } => "Due date (YYYY-MM-DD, empty clears)",
         EditPurpose::Filter => "Filter",
         EditPurpose::NewNoteTitle => "New note title",
+        EditPurpose::RenameNote { .. } => "Rename note",
         EditPurpose::AddNoteItem { .. } => "Add item",
         EditPurpose::EditNoteItem { .. } => "Edit item",
         EditPurpose::InsertNoteItem { .. } => "Insert item",
@@ -374,7 +376,7 @@ fn render_category_picker(picker: &CategoryPicker, frame: &mut Frame, area: Rect
     frame.render_widget(para, rect);
 }
 
-/// The `f` note switcher: the notes list (title + item count) as a
+/// The `'` note switcher: the notes list (title + item count) as a
 /// closed-list overlay, same interaction shape as the category picker.
 fn render_note_picker(app: &App, selected: usize, frame: &mut Frame, area: Rect) {
     let height = (app.notes_list.len() as u16 + 2).min(area.height);
@@ -427,7 +429,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
             "Global",
             &[
                 "1/g today · 2/s standup · 3/t tasks · 4/n notes",
-                "N new note · f switch note · tab/h/l pane focus · j/k move",
+                "N new note · ' switch note · tab/h/l pane focus · j/k move",
                 "? this help · q/esc quit",
             ],
         ),
@@ -444,12 +446,15 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ),
         (
             "Notes tab",
-            &["j/k preview in side pane · enter open · N new note"],
+            &[
+                "j/k preview in side pane · enter open · N new note",
+                "r rename · J/K move note up/down (order persists)",
+            ],
         ),
         (
             "Notes pane",
             &[
-                "a add item · o insert below · A new section",
+                "a add item · o insert below · A new section · r rename note",
                 "e edit · D delete · E open in $EDITOR · [/] switch note",
             ],
         ),
