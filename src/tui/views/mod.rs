@@ -7,7 +7,7 @@ mod tasks;
 mod today;
 
 use crate::model::{Status, Task};
-use crate::tui::app::{App, EditPurpose, Editing, Focus, Mode, Tab};
+use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab};
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -51,6 +51,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
 
     match &app.mode {
         Mode::Editing(editing) => render_input(editing, frame, area),
+        Mode::CategoryPicker(picker) => render_category_picker(picker, frame, area),
         Mode::ConfirmDelete => render_confirm(frame, area),
         Mode::Normal => {}
     }
@@ -171,6 +172,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 
     let hints = match &app.mode {
         Mode::Editing(_) => "enter save · esc cancel".to_string(),
+        Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::ConfirmDelete => "delete? y / n".to_string(),
         Mode::Normal => match app.focus {
             Focus::Side => {
@@ -179,11 +181,11 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             }
             Focus::Main => match app.tab {
                 Tab::Today => {
-                    "a add · space done · b block · e edit · d due · D del · tab notes · 1-4 tabs · q quit"
+                    "a add · space done · b block · e edit · d due · C cat · D del · tab notes · 1-4 tabs · q quit"
                         .to_string()
                 }
                 Tab::Tasks => format!(
-                    "a add · space done · b block · e edit · d due · D del · / filter · c cat[{}] · p proj[{}] · tab notes · q quit",
+                    "a add · space done · b block · e edit · d due · C cat · D del · / filter · c cat[{}] · p proj[{}] · tab notes · q quit",
                     app.category_filter_label(),
                     app.project_filter_label()
                 ),
@@ -227,6 +229,36 @@ fn render_input(editing: &Editing, frame: &mut Frame, area: Rect) {
 
     let cursor_col = (editing.cursor as u16).min(inner_width.saturating_sub(1));
     frame.set_cursor_position((rect.x + 1 + cursor_col, rect.y + 1));
+}
+
+fn render_category_picker(picker: &CategoryPicker, frame: &mut Frame, area: Rect) {
+    let height = picker.options.len() as u16 + 2;
+    let rect = centered_rect(area, 40, height);
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Category (j/k move · enter select · esc cancel)")
+        .border_style(header_style());
+    let lines: Vec<Line> = picker
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            if i == picker.selected {
+                Line::from(Span::styled(
+                    format!("> {opt}"),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::raw(format!("  {opt}")))
+            }
+        })
+        .collect();
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, rect);
 }
 
 fn render_confirm(frame: &mut Frame, area: Rect) {

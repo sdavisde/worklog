@@ -321,6 +321,53 @@ fn due_date_set_and_invalid_input_shows_footer_error() {
 }
 
 #[test]
+fn category_picker_opens_on_current_value_moves_and_persists_choice() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    // "engineering" sits at index 3 of Config::default().categories, with
+    // "intake" immediately after it at index 4.
+    store
+        .save_tasks(&[task("recategorize me", "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('C'));
+    match &app.mode {
+        Mode::CategoryPicker(p) => assert_eq!(p.selected, 3, "opens highlighting current category"),
+        other => panic!("expected CategoryPicker mode, got {other:?}"),
+    }
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(
+        Store::new(dir.path()).load_tasks().unwrap()[0].category,
+        "intake"
+    );
+    assert!(matches!(app.mode, Mode::Normal));
+}
+
+#[test]
+fn category_picker_esc_cancels_without_changing_category() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("leave me alone", "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('C'));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Esc);
+
+    assert_eq!(
+        Store::new(dir.path()).load_tasks().unwrap()[0].category,
+        "engineering",
+        "category unchanged on cancel"
+    );
+    assert!(matches!(app.mode, Mode::Normal));
+}
+
+#[test]
 fn delete_confirm_and_cancel() {
     let dir = TempDir::new().unwrap();
     let store = Store::new(dir.path());

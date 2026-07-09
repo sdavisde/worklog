@@ -46,6 +46,15 @@ pub enum EditPurpose {
     EditNoteItem { heading: String, item_index: usize },
 }
 
+/// A closed-list picker for the selected task's category: `j`/`k` (or
+/// arrows) move the highlight, `enter` applies it, `esc` cancels.
+#[derive(Debug, Clone)]
+pub struct CategoryPicker {
+    pub id: String,
+    pub options: Vec<String>,
+    pub selected: usize,
+}
+
 /// A single-line input buffer with a char-index cursor.
 #[derive(Debug, Clone)]
 pub struct Editing {
@@ -104,6 +113,7 @@ impl Editing {
 pub enum Mode {
     Normal,
     Editing(Editing),
+    CategoryPicker(CategoryPicker),
     ConfirmDelete,
 }
 
@@ -409,6 +419,7 @@ impl App {
         self.footer_msg = None;
         match self.mode {
             Mode::Editing(_) => self.handle_editing_key(key)?,
+            Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
             Mode::ConfirmDelete => self.handle_confirm_key(key)?,
             Mode::Normal => self.handle_normal_key(key)?,
         }
@@ -492,6 +503,17 @@ impl App {
                         EditPurpose::EditTask { id: sel.id.clone() },
                         sel.text.clone(),
                     ));
+                }
+            }
+            KeyCode::Char('C') => {
+                if let Some(sel) = self.selected_task() {
+                    let options = self.config.categories.clone();
+                    let selected = options.iter().position(|c| c == &sel.category).unwrap_or(0);
+                    self.mode = Mode::CategoryPicker(CategoryPicker {
+                        id: sel.id.clone(),
+                        options,
+                        selected,
+                    });
                 }
             }
             KeyCode::Char('d') => {
@@ -789,6 +811,39 @@ impl App {
         }
         self.store.save_tasks(&self.tasks)?;
         self.reload()
+    }
+
+    fn handle_category_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Mode::CategoryPicker(picker) = &mut self.mode else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if picker.selected + 1 < picker.options.len() {
+                    picker.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                picker.selected = picker.selected.saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let id = picker.id.clone();
+                let category = picker.options.get(picker.selected).cloned();
+                self.mode = Mode::Normal;
+                if let Some(category) = category {
+                    for t in self.tasks.iter_mut() {
+                        if t.id == id {
+                            t.category = category.clone();
+                        }
+                    }
+                    self.store.save_tasks(&self.tasks)?;
+                    self.reload()?;
+                }
+            }
+            KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {}
+        }
+        Ok(())
     }
 
     fn cycle_category(&mut self) {

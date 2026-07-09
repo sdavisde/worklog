@@ -88,12 +88,28 @@ Keybind sketch (final bindings configurable in `config.yaml`):
 | `space`/`x` | complete task |
 | `b` | toggle blocked |
 | `e` | edit selected task/item |
+| `C` | change selected task's category (popup list of configured categories, current one pre-highlighted; `j`/`k` move, `enter` selects, `esc` cancels) |
 | `d` | set/clear due date |
 | `s` | standup view |
 | `t` / `n` | tasks / notes view |
 | `/` | filter |
 | `j`/`k`, arrows | move |
 | `q` / `esc` | back / quit |
+
+Keyboard-interaction inspiration: reuse existing UI machinery (the
+single-line edit buffer) for freeform/tokenized input; reach for a closed
+list picker only for genuinely closed, small (3-8 item) enum-like fields
+where showing the options beats requiring exact recall/spelling — as with
+`C`'s category picker. Patterns worth drawing from in other well-regarded
+TUIs: **taskwarrior-tui** (bottom prompt reuses one input line, parses
+attribute tokens like `project:`/`priority:` out of typed text — the model
+for our `@category`/`#project` token parsing on `a`/`e`), **lazygit**
+(in-place single-key cycling on a row for small enum-like state, e.g.
+rebase actions — and popups with per-option single-key shortcuts for
+broader choices, the closer analogue to `C`'s picker), **k9s** (contextual
+single-key shortcuts per resource, `:` command bar for freeform input),
+**gitui** (discrete single keys per action, no freeform typing for enum
+state).
 
 ## CLI
 
