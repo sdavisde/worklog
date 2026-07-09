@@ -8,25 +8,46 @@ on:
 jobs:
   release:
     runs-on: macos-latest # Apple Silicon (aarch64) runner
+    outputs:
+      arm_sha: ${{ steps.shas.outputs.arm_sha }}
+      intel_sha: ${{ steps.shas.outputs.intel_sha }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: add cross-compile target
+        run: rustup target add x86_64-apple-darwin
+
       - uses: Swatinem/rust-cache@v2
 
       # Safety gate: never ship a release built on a failing tree.
+      # (Native aarch64 target only — x86_64 binaries can't run on this runner.)
       - name: test
         run: cargo test
 
-      - name: build release binary
-        run: cargo build --release
-
-      - name: package tarball
+      - name: build release binaries
         run: |
-          tar -czf wl-aarch64-apple-darwin.tar.gz -C target/release wl
-          shasum -a 256 wl-aarch64-apple-darwin.tar.gz > wl-aarch64-apple-darwin.tar.gz.sha256
-          cat wl-aarch64-apple-darwin.tar.gz.sha256
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+
+      - name: package tarballs
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            tar -czf "wl-${target}.tar.gz" -C "target/${target}/release" wl
+            shasum -a 256 "wl-${target}.tar.gz" > "wl-${target}.tar.gz.sha256"
+            cat "wl-${target}.tar.gz.sha256"
+          done
+
+      - name: export sha256 job outputs
+        id: shas
+        run: |
+          arm_sha="$(cut -d' ' -f1 wl-aarch64-apple-darwin.tar.gz.sha256)"
+          intel_sha="$(cut -d' ' -f1 wl-x86_64-apple-darwin.tar.gz.sha256)"
+          {
+            echo "arm_sha=${arm_sha}"
+            echo "intel_sha=${intel_sha}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: print sha256 to job summary
         run: |
@@ -35,9 +56,10 @@ jobs:
             echo ""
             echo '```'
             cat wl-aarch64-apple-darwin.tar.gz.sha256
+            cat wl-x86_64-apple-darwin.tar.gz.sha256
             echo '```'
             echo ""
-            echo "Copy the sha256 above (first field) into \`Formula/wl.rb\` \`sha256 \"...\"\`."
+            echo "These sha256 values are pushed automatically into the tap formula by the update-tap job."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: create release
@@ -46,4 +68,83 @@ jobs:
           files: |
             wl-aarch64-apple-darwin.tar.gz
             wl-aarch64-apple-darwin.tar.gz.sha256
+            wl-x86_64-apple-darwin.tar.gz
+            wl-x86_64-apple-darwin.tar.gz.sha256
           generate_release_notes: true
+
+  update-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: regenerate and push tap formula
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          ARM_SHA: ${{ needs.release.outputs.arm_sha }}
+          INTEL_SHA: ${{ needs.release.outputs.intel_sha }}
+        run: |
+          set -euo pipefail
+
+          # The secret resolves to an empty string until the user adds it.
+          # Skip gracefully so the release still succeeds beforehand.
+          if [ -z "${TAP_GITHUB_TOKEN}" ]; then
+            echo "::warning::TAP_GITHUB_TOKEN not set — skipping tap update"
+            exit 0
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Updating sdavisde/homebrew-tap to wl ${VERSION}"
+
+          git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/sdavisde/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+
+          # Quoted heredoc: backticks and $() are literal, placeholders filled by sed below.
+          cat > tap/Formula/wl.rb <<'EOF'
+          class Wl < Formula
+            desc "Keyboard-first worklog TUI"
+            homepage "https://github.com/sdavisde/worklog"
+            version "__VERSION__"
+
+            # The old worklog-cli tap also installs a `wl` binary.
+            conflicts_with "worklog-cli", because: "both install a `wl` binary"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/sdavisde/worklog/releases/download/v__VERSION__/wl-aarch64-apple-darwin.tar.gz"
+                sha256 "__ARM_SHA__"
+              end
+              on_intel do
+                url "https://github.com/sdavisde/worklog/releases/download/v__VERSION__/wl-x86_64-apple-darwin.tar.gz"
+                sha256 "__INTEL_SHA__"
+              end
+            end
+
+            def install
+              bin.install "wl"
+            end
+
+            test do
+              system "#{bin}/wl", "--version"
+            end
+          end
+          EOF
+
+          sed -i.bak \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__ARM_SHA__|${ARM_SHA}|g" \
+            -e "s|__INTEL_SHA__|${INTEL_SHA}|g" \
+            tap/Formula/wl.rb
+          rm -f tap/Formula/wl.rb.bak
+
+          echo "--- generated tap/Formula/wl.rb ---"
+          cat tap/Formula/wl.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/wl.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date — nothing to commit."
+            exit 0
+          fi
+          git commit -m "wl ${VERSION}"
+          git push origin HEAD:main

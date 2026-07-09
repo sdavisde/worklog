@@ -15,37 +15,32 @@ and rationale.
 
 ### Homebrew
 
-The release pipeline lives in this repo; the formula is published from a
-separate personal tap repo. To set it up the first time:
+```sh
+brew install sdavisde/tap/wl
+```
 
-1. Create a GitHub repo named `sdavisde/homebrew-tap`.
-2. Copy [`Formula/wl.rb`](./Formula/wl.rb) from this repo into the tap repo
-   at `Formula/wl.rb`.
-3. Tag a release here to trigger the build:
-   ```sh
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-   This runs [`.github/workflows/release.yml`](./.github/workflows/release.yml),
-   which runs the test suite, builds an `aarch64-apple-darwin` release
-   binary, packages it as `wl-aarch64-apple-darwin.tar.gz`, and publishes a
-   GitHub release with the tarball and a `.sha256` file attached. The sha256
-   is also printed in the workflow's job summary for easy copy-paste.
-4. Copy that sha256 into the tap repo's `Formula/wl.rb`, replacing
-   `PUT_TARBALL_SHA256_HERE`, and commit it.
-5. Install:
-   ```sh
-   brew install sdavisde/tap/wl
-   ```
+`brew` expands `sdavisde/tap` to the [`sdavisde/homebrew-tap`](https://github.com/sdavisde/homebrew-tap)
+repo, which carries the canonical `Formula/wl.rb`. Both Apple Silicon
+(`aarch64`) and Intel (`x86_64`) macOS builds are published.
 
-For subsequent releases, bump `version`/`url`/`sha256` in the tap formula to
-match the new tag.
+The formula is regenerated automatically: tagging a `v*` release here runs
+[`.github/workflows/release.yml`](./.github/workflows/release.yml), which
+tests, builds both macOS binaries, publishes a GitHub release with the
+tarballs and `.sha256` files, and then commits the updated formula (new
+version + both sha256 values) to the tap repo.
 
-**Optional upgrade path:** [`dist`](https://opensource.axo.dev/cargo-dist/)
-(formerly `cargo-dist`) can generate the release workflow *and* automatically
-push the updated formula to the tap repo on every tag, removing the manual
-sha256 copy-paste step above. Not set up yet — worth adopting once releases
-become frequent.
+**Migrating from the old `worklog-cli`?** That formula installs the same
+`wl` binary name, so uninstall it first to avoid a conflict:
+
+```sh
+brew uninstall worklog-cli
+brew install sdavisde/tap/wl
+```
+
+Your existing data is safe. Run `wl import-legacy` once to migrate old daily
+notes into the current model — it renames `~/.worklog/daily_notes/` to
+`~/.worklog/legacy/` and deletes nothing (see
+[`wl import-legacy`](#wl-import-legacy) below).
 
 ### From source
 

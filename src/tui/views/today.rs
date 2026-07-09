@@ -2,7 +2,9 @@
 //! today's completions dimmed below.
 
 use crate::tui::app::App;
-use crate::tui::views::{completed_line, header_style, pane_block, selection_style, task_line};
+use crate::tui::views::{
+    completed_line, header_style, pane_block, selection_style, task_line, truncate_line,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -11,6 +13,8 @@ use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let active = app.today_active();
     let completions = app.today_completions();
+    let inner = area.width.saturating_sub(2) as usize;
+    let row_width = inner.saturating_sub(2).max(8); // room for the "> " shift
     let comp_height = if completions.is_empty() {
         0
     } else {
@@ -25,7 +29,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     } else {
         active
             .iter()
-            .map(|t| ListItem::new(task_line(t, app.today)))
+            .map(|t| ListItem::new(truncate_line(task_line(t, app.today), row_width)))
             .collect()
     };
 
@@ -42,7 +46,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
 
     if !completions.is_empty() {
         let mut lines = vec![Line::from(Span::styled("Completed today", header_style()))];
-        lines.extend(completions.iter().map(completed_line));
+        lines.extend(
+            completions
+                .iter()
+                .map(|t| truncate_line(completed_line(t), inner)),
+        );
         frame.render_widget(Paragraph::new(lines), bottom);
     }
 }

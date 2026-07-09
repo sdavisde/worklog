@@ -81,6 +81,119 @@ fn parse_checklist(trimmed: &str) -> Option<Block> {
     })
 }
 
+// ---- inline spans -----------------------------------------------------------
+
+/// One styled run of inline text within a single line.
+///
+/// Deliberately conservative: no nesting, and any marker without a matching
+/// closer on the same line is treated as literal text.
+// Not wired into any renderer yet; kept for the upcoming styled notes view.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inline {
+    Text(String),
+    /// `**bold**`
+    Bold(String),
+    /// `*italic*`
+    Italic(String),
+    /// `` `code` ``
+    Code(String),
+    /// `[text](url)`; the url is kept for callers that want it, but the
+    /// display text is what renders.
+    Link {
+        text: String,
+        url: String,
+    },
+}
+
+/// Tokenize one line of item text into inline runs. Empty-content markers
+/// (`**` alone, ` `` ` etc.) and unclosed markers fall through as literal
+/// text rather than erroring.
+#[allow(dead_code)]
+pub fn parse_inline(input: &str) -> Vec<Inline> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out: Vec<Inline> = Vec::new();
+    let mut literal = String::new();
+    let mut i = 0;
+
+    let push_literal = |buf: &mut String, out: &mut Vec<Inline>| {
+        if !buf.is_empty() {
+            out.push(Inline::Text(std::mem::take(buf)));
+        }
+    };
+
+    while i < chars.len() {
+        // Emphasis content must not be empty or start/end with a space, so
+        // stray stars in prose ("2 * 3") stay literal.
+        let emphasizable = |content: &[char]| {
+            !content.is_empty() && content[0] != ' ' && content[content.len() - 1] != ' '
+        };
+
+        // `**bold**`
+        if chars[i] == '*' && chars.get(i + 1) == Some(&'*') {
+            if let Some(close) = find_seq(&chars, i + 2, &['*', '*']) {
+                if emphasizable(&chars[i + 2..close]) {
+                    push_literal(&mut literal, &mut out);
+                    out.push(Inline::Bold(chars[i + 2..close].iter().collect()));
+                    i = close + 2;
+                    continue;
+                }
+            }
+        }
+        // `*italic*` (single star; the double-star case is handled above)
+        if chars[i] == '*' {
+            if let Some(close) = find_seq(&chars, i + 1, &['*']) {
+                if emphasizable(&chars[i + 1..close]) {
+                    push_literal(&mut literal, &mut out);
+                    out.push(Inline::Italic(chars[i + 1..close].iter().collect()));
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        // `` `code` ``
+        if chars[i] == '`' {
+            if let Some(close) = find_seq(&chars, i + 1, &['`']) {
+                if close > i + 1 {
+                    push_literal(&mut literal, &mut out);
+                    out.push(Inline::Code(chars[i + 1..close].iter().collect()));
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        // `[text](url)`
+        if chars[i] == '[' {
+            if let Some(bracket) = find_seq(&chars, i + 1, &[']', '(']) {
+                if let Some(paren) = find_seq(&chars, bracket + 2, &[')']) {
+                    if bracket > i + 1 {
+                        push_literal(&mut literal, &mut out);
+                        out.push(Inline::Link {
+                            text: chars[i + 1..bracket].iter().collect(),
+                            url: chars[bracket + 2..paren].iter().collect(),
+                        });
+                        i = paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        literal.push(chars[i]);
+        i += 1;
+    }
+    push_literal(&mut literal, &mut out);
+    out
+}
+
+/// First index `>= from` where `seq` occurs in `chars`, if any.
+#[allow(dead_code)]
+fn find_seq(chars: &[char], from: usize, seq: &[char]) -> Option<usize> {
+    if chars.len() < seq.len() {
+        return None;
+    }
+    (from..=chars.len() - seq.len()).find(|&i| chars[i..i + seq.len()] == *seq)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +312,67 @@ mod tests {
     fn empty_input_yields_no_blocks() {
         assert_eq!(parse_blocks(""), Vec::new());
         assert_eq!(parse_blocks("\n\n   \n"), Vec::new());
+    }
+
+    #[test]
+    fn inline_parses_bold_italic_code_and_link() {
+        let spans = parse_inline("see **bold** and *ital* plus `code` at [docs](https://x.dev)");
+        assert_eq!(
+            spans,
+            vec![
+                Inline::Text("see ".to_string()),
+                Inline::Bold("bold".to_string()),
+                Inline::Text(" and ".to_string()),
+                Inline::Italic("ital".to_string()),
+                Inline::Text(" plus ".to_string()),
+                Inline::Code("code".to_string()),
+                Inline::Text(" at ".to_string()),
+                Inline::Link {
+                    text: "docs".to_string(),
+                    url: "https://x.dev".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn inline_unclosed_markers_render_literally() {
+        assert_eq!(
+            parse_inline("2 * 3 * is math"),
+            vec![Inline::Text("2 * 3 * is math".to_string())],
+            "space-padded stars are arithmetic, not emphasis"
+        );
+        assert_eq!(
+            parse_inline("unclosed **bold and `code without end"),
+            vec![Inline::Text(
+                "unclosed **bold and `code without end".to_string()
+            )]
+        );
+        assert_eq!(
+            parse_inline("a * lone star"),
+            vec![Inline::Text("a * lone star".to_string())]
+        );
+        assert_eq!(
+            parse_inline("[text with no url]"),
+            vec![Inline::Text("[text with no url]".to_string())]
+        );
+    }
+
+    #[test]
+    fn inline_empty_markers_are_literal() {
+        assert_eq!(
+            parse_inline("**** and `` stay put"),
+            vec![Inline::Text("**** and `` stay put".to_string())]
+        );
+    }
+
+    #[test]
+    fn inline_plain_text_is_one_run() {
+        assert_eq!(
+            parse_inline("nothing fancy here"),
+            vec![Inline::Text("nothing fancy here".to_string())]
+        );
+        assert_eq!(parse_inline(""), Vec::<Inline>::new());
     }
 
     #[test]

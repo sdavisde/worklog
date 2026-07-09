@@ -54,8 +54,7 @@ impl Body {
     }
 
     /// Item lines (in order) under `heading`, or empty if the section
-    /// doesn't exist. A convenience accessor exercised by the unit tests.
-    #[allow(dead_code)]
+    /// doesn't exist.
     pub fn items(&self, heading: &str) -> Vec<&str> {
         self.sections
             .iter()
@@ -108,6 +107,46 @@ impl Body {
         section.lines.remove(pos);
         Ok(())
     }
+
+    /// Insert a new item directly below the `index`-th item (0-based,
+    /// counting only items) under `heading`. Backs the Notes TUI view's `o`
+    /// insert-below action on an item row.
+    pub fn insert_item_after(
+        &mut self,
+        heading: &str,
+        index: usize,
+        text: impl Into<String>,
+    ) -> Result<()> {
+        let pos = item_line_index(self, heading, index)?;
+        let section = self.find_section_mut(heading).expect("checked above");
+        section.lines.insert(pos + 1, Line::Item(text.into()));
+        Ok(())
+    }
+
+    /// Insert a new item as the first line of `heading`'s section, erroring
+    /// if the section doesn't exist. Backs `o` on a heading row (including
+    /// empty sections).
+    pub fn insert_item_first(&mut self, heading: &str, text: impl Into<String>) -> Result<()> {
+        let section = self
+            .find_section_mut(heading)
+            .ok_or_else(|| eyre!("no section {heading:?}"))?;
+        section.lines.insert(0, Line::Item(text.into()));
+        Ok(())
+    }
+
+    /// Insert a new, empty section after the section at index `after`, or at
+    /// the end when `after` is `None` (or out of range). Backs the Notes TUI
+    /// view's `A` new-section action.
+    pub fn insert_section_after(&mut self, after: Option<usize>, heading: impl Into<String>) {
+        let section = Section {
+            heading: heading.into(),
+            lines: Vec::new(),
+        };
+        match after {
+            Some(i) if i < self.sections.len() => self.sections.insert(i + 1, section),
+            _ => self.sections.push(section),
+        }
+    }
 }
 
 /// Helper shared by `edit_item`/`delete_item`.
@@ -135,6 +174,12 @@ pub fn parse_body(text: &str) -> Body {
 
     for raw_line in text.lines() {
         if let Some(heading) = raw_line.strip_prefix("## ") {
+            // Fold the blank separator line `serialize_body` emits between
+            // sections back out of the model, so save→load round trips are
+            // stable and every model `Line` maps 1:1 to an emitted line.
+            if matches!(current.lines.last(), Some(Line::Text(s)) if s.trim().is_empty()) {
+                current.lines.pop();
+            }
             if started || !current.lines.is_empty() {
                 sections.push(current);
             }
@@ -369,6 +414,53 @@ mod tests {
     }
 
     #[test]
+    fn multi_section_round_trip_is_stable() {
+        let mut body = Body::default();
+        body.add_item("First", "one");
+        body.add_item("First", "two");
+        body.add_item("Second", "three");
+
+        let once = serialize_body(&body);
+        let reparsed = parse_body(&once);
+        assert_eq!(reparsed, body, "parse ∘ serialize is the identity");
+        let twice = serialize_body(&reparsed);
+        assert_eq!(twice, once, "byte-stable across save→load cycles");
+    }
+
+    #[test]
+    fn empty_section_round_trip_is_stable() {
+        let body = Body {
+            sections: vec![
+                Section {
+                    heading: "Empty".to_string(),
+                    lines: Vec::new(),
+                },
+                Section {
+                    heading: "Full".to_string(),
+                    lines: vec![Line::Item("only item".to_string())],
+                },
+            ],
+        };
+
+        let once = serialize_body(&body);
+        let reparsed = parse_body(&once);
+        assert_eq!(reparsed, body, "empty section survives the round trip");
+        assert_eq!(serialize_body(&reparsed), once, "byte-stable");
+    }
+
+    #[test]
+    fn trailing_blank_in_last_section_is_kept() {
+        let text = "## Only\n- item\n\n";
+        let body = parse_body(text);
+        assert_eq!(
+            body.sections[0].lines,
+            vec![Line::Item("item".to_string()), Line::Text(String::new())],
+            "a trailing blank at EOF is real content, not a separator"
+        );
+        assert_eq!(serialize_body(&body), text);
+    }
+
+    #[test]
     fn add_edit_delete_item() {
         let mut body = Body::default();
         body.add_item("Goals", "first goal");
@@ -383,6 +475,46 @@ mod tests {
 
         body.delete_item("Goals", 0).unwrap();
         assert_eq!(body.items("Goals"), vec!["second goal, revised"]);
+    }
+
+    #[test]
+    fn insert_item_after_lands_between_existing_items() {
+        let mut body = Body::default();
+        body.add_item("Goals", "first");
+        body.add_item("Goals", "third");
+
+        body.insert_item_after("Goals", 0, "second").unwrap();
+        assert_eq!(body.items("Goals"), vec!["first", "second", "third"]);
+        assert!(body.insert_item_after("Goals", 9, "nope").is_err());
+        assert!(body.insert_item_after("Missing", 0, "nope").is_err());
+    }
+
+    #[test]
+    fn insert_item_first_prepends_and_errors_on_missing_section() {
+        let mut body = Body::default();
+        body.insert_section_after(None, "Empty");
+        body.insert_item_first("Empty", "now first").unwrap();
+        body.insert_item_first("Empty", "even earlier").unwrap();
+        assert_eq!(body.items("Empty"), vec!["even earlier", "now first"]);
+        assert!(body.insert_item_first("Missing", "nope").is_err());
+    }
+
+    #[test]
+    fn insert_section_after_index_and_at_end() {
+        let mut body = Body::default();
+        body.add_item("First", "one");
+        body.add_item("Last", "two");
+
+        body.insert_section_after(Some(0), "Middle");
+        let headings: Vec<&str> = body.sections.iter().map(|s| s.heading.as_str()).collect();
+        assert_eq!(headings, vec!["First", "Middle", "Last"]);
+
+        body.insert_section_after(None, "End");
+        assert_eq!(body.sections.last().unwrap().heading, "End");
+
+        // Round trip through markdown keeps the new (empty) sections intact.
+        let reparsed = parse_body(&serialize_body(&body));
+        assert_eq!(reparsed, body);
     }
 
     #[test]

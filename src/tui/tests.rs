@@ -3,7 +3,7 @@
 //! the same `handle_key` path the event loop uses. All I/O is confined to
 //! `tempfile` temp dirs; nothing touches a real `~/.worklog`.
 
-use super::app::{App, Focus, Mode, Tab};
+use super::app::{App, Focus, Mode, Tab, TaskView};
 use super::editor;
 use super::views;
 use crate::config::Config;
@@ -173,26 +173,142 @@ fn tasks_view_footer_shows_hints() {
     let out = render(&app);
     assert!(out.contains("filter"), "footer hint present");
     assert!(out.contains("cat["), "category filter indicator present");
+    assert!(out.contains("view[Open]"), "status view indicator present");
 }
 
 #[test]
-fn notes_list_and_detail_render_content() {
+fn v_cycles_task_views_and_done_shows_archive() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("still open", "engineering", Status::Open, None)])
+        .unwrap();
+    store
+        .append_archive(&archived_on("shipped last week", 7))
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    let open = render(&app);
+    assert!(open.contains("Tasks — Open"), "open view in title");
+    assert!(open.contains("still open"));
+    assert!(!open.contains("shipped last week"), "archive hidden");
+
+    press(&mut app, KeyCode::Char('v'));
+    assert_eq!(app.task_view, TaskView::Done);
+    let done = render(&app);
+    assert!(done.contains("Tasks — Done"), "done view in title");
+    assert!(done.contains("shipped last week"), "archived task shown");
+    assert!(done.contains("done 20"), "completion date shown");
+    assert!(!done.contains("still open"), "open task hidden");
+
+    press(&mut app, KeyCode::Char('v'));
+    assert_eq!(app.task_view, TaskView::All);
+    let all = render(&app);
+    assert!(all.contains("still open"));
+    assert!(all.contains("shipped last week"));
+
+    press(&mut app, KeyCode::Char('v'));
+    assert_eq!(app.task_view, TaskView::Open, "cycle wraps back to open");
+}
+
+#[test]
+fn done_view_sorts_recent_first_and_composes_with_text_filter() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store.append_archive(&archived_on("older fix", 9)).unwrap();
+    store.append_archive(&archived_on("newer fix", 2)).unwrap();
+    store.append_archive(&archived_on("other work", 1)).unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+    press(&mut app, KeyCode::Char('v')); // Done
+
+    let out = render(&app);
+    let newer = out.find("newer fix").expect("newer rendered");
+    let older = out.find("older fix").expect("older rendered");
+    assert!(newer < older, "most recent completion listed first");
+
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "fix");
+    press(&mut app, KeyCode::Enter);
+    let filtered = render(&app);
+    assert!(filtered.contains("newer fix"));
+    assert!(filtered.contains("older fix"));
+    assert!(!filtered.contains("other work"), "text filter applies");
+}
+
+#[test]
+fn archived_tasks_are_read_only() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .append_archive(&archived_on("already done", 3))
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+    press(&mut app, KeyCode::Char('v')); // Done view, archived task selected
+
+    for mutation in ['b', 'x', 'e', 'd', 'C', 'D'] {
+        press(&mut app, KeyCode::Char(mutation));
+        assert!(
+            matches!(app.mode, Mode::Normal),
+            "'{mutation}' opens no prompt on an archived task"
+        );
+        assert!(
+            app.footer_msg.is_some(),
+            "'{mutation}' surfaces the read-only notice"
+        );
+    }
+
+    let reader = Store::new(dir.path());
+    assert_eq!(reader.load_archive().unwrap().len(), 1, "archive intact");
+    assert!(
+        reader.load_tasks().unwrap().is_empty(),
+        "no task resurrected"
+    );
+}
+
+#[test]
+fn question_mark_opens_help_overlay_and_any_key_closes() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("some task", "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('?'));
+    assert!(matches!(app.mode, Mode::Help));
+    let out = render(&app);
+    assert!(out.contains("Keybinds"), "overlay title rendered");
+    assert!(out.contains("Global"), "groups rendered");
+    assert!(out.contains("Notes pane"), "notes group rendered");
+
+    // any key closes without acting: 'D' must not open a delete confirm
+    press(&mut app, KeyCode::Char('D'));
+    assert!(matches!(app.mode, Mode::Normal), "overlay dismissed");
+    let after = render(&app);
+    assert!(!after.contains("Keybinds"), "overlay gone");
+    assert!(!app.should_quit, "close key not re-dispatched");
+}
+
+#[test]
+fn note_detail_renders_in_side_pane() {
     let dir = TempDir::new().unwrap();
     let notes = NotesStore::new(dir.path().join("notes"));
     let mut doc = notes.create("Long-term goals", None).unwrap();
     doc.body.add_item("Areas to grow into", "read DDIA ch. 8-9");
     notes.save(&mut doc).unwrap();
 
+    // the first note is auto-loaded into the always-on side pane
     let mut app = app_in(dir.path());
-    app.tab = Tab::Notes;
-    let list_out = render(&app);
-    assert!(list_out.contains("Long-term goals"), "note title in list");
-    assert!(list_out.contains("1 items"), "item count in list");
-
-    // open the doc into the side pane
-    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Tab);
     assert_eq!(app.focus, Focus::Side);
     let detail_out = render(&app);
+    assert!(detail_out.contains("Long-term goals"), "title rendered");
     assert!(
         detail_out.contains("Areas to grow into"),
         "heading rendered"
@@ -218,6 +334,95 @@ fn add_task_parses_category_and_project_tokens() {
     assert_eq!(saved[0].text, "fix login");
     assert_eq!(saved[0].category, "engineering");
     assert_eq!(saved[0].project.as_deref(), Some("auth"));
+}
+
+#[test]
+fn add_task_shows_category_ghost_and_tab_completes_it() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    press(&mut app, KeyCode::Char('a'));
+    type_str(&mut app, "fix login @eng");
+
+    // the ghost remainder renders inline after the cursor, dimmed
+    let out = render(&app);
+    assert!(
+        out.contains("fix login @engineering"),
+        "ghost remainder rendered inline: {out}"
+    );
+    assert!(out.contains("tab complete"), "footer advertises tab");
+
+    press(&mut app, KeyCode::Tab);
+    match &app.mode {
+        Mode::Editing(e) => {
+            assert_eq!(e.buffer, "fix login @engineering ");
+            assert_eq!(e.cursor, e.buffer.chars().count(), "cursor after space");
+        }
+        other => panic!("still editing after tab, got {other:?}"),
+    }
+
+    press(&mut app, KeyCode::Enter);
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].text, "fix login");
+    assert_eq!(saved[0].category, "engineering");
+}
+
+#[test]
+fn tab_completes_project_from_active_and_archived_tasks() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[Task::new(
+            "active work",
+            "engineering",
+            Some("auth".to_string()),
+            None,
+        )])
+        .unwrap();
+    let mut done = Task::new("shipped", "engineering", Some("billing".to_string()), None);
+    done.status = Status::Done;
+    done.completed_at = Some(Local::now().fixed_offset());
+    store.append_archive(&done).unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    // project of an archived task still completes
+    press(&mut app, KeyCode::Char('a'));
+    type_str(&mut app, "deploy #bil");
+    press(&mut app, KeyCode::Tab);
+    match &app.mode {
+        Mode::Editing(e) => assert_eq!(e.buffer, "deploy #billing "),
+        other => panic!("still editing after tab, got {other:?}"),
+    }
+    press(&mut app, KeyCode::Esc);
+
+    // case-insensitive typing lands on the canonical project name
+    press(&mut app, KeyCode::Char('a'));
+    type_str(&mut app, "refactor #AU");
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Enter);
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    let added = saved.iter().find(|t| t.text == "refactor").unwrap();
+    assert_eq!(added.project.as_deref(), Some("auth"));
+}
+
+#[test]
+fn tab_without_suggestion_is_noop_while_editing() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    press(&mut app, KeyCode::Char('a'));
+    type_str(&mut app, "plain text");
+    press(&mut app, KeyCode::Tab);
+    match &app.mode {
+        Mode::Editing(e) => assert_eq!(e.buffer, "plain text", "buffer untouched"),
+        other => panic!("tab must not leave editing mode, got {other:?}"),
+    }
+    assert_eq!(app.focus, Focus::Main, "tab does not toggle pane focus");
 }
 
 #[test]
@@ -393,8 +598,8 @@ fn delete_confirm_and_cancel() {
 fn new_note_creates_doc_and_opens_detail() {
     let dir = TempDir::new().unwrap();
     let mut app = app_in(dir.path());
-    app.tab = Tab::Notes;
 
+    // N is global: works straight from the default Today tab
     press(&mut app, KeyCode::Char('N'));
     type_str(&mut app, "Scratchpad");
     press(&mut app, KeyCode::Enter);
@@ -409,6 +614,113 @@ fn new_note_creates_doc_and_opens_detail() {
 }
 
 #[test]
+fn new_note_key_is_global_across_tabs_and_panes() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Existing", &["item"]);
+    let mut app = app_in(dir.path());
+
+    for setup in [
+        KeyCode::Char('1'), // Today
+        KeyCode::Char('2'), // Standup
+        KeyCode::Char('3'), // Tasks
+        KeyCode::Char('4'), // Notes
+        KeyCode::Tab,       // side pane
+    ] {
+        press(&mut app, setup);
+        press(&mut app, KeyCode::Char('N'));
+        assert!(
+            matches!(
+                &app.mode,
+                Mode::Editing(e) if e.purpose == super::app::EditPurpose::NewNoteTitle
+            ),
+            "N opens the new-note input after {setup:?}"
+        );
+        press(&mut app, KeyCode::Esc);
+    }
+}
+
+#[test]
+fn new_note_from_notes_tab_selects_it_in_the_list() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Alpha note", &["a"]);
+    let mut app = app_in(dir.path());
+
+    press(&mut app, KeyCode::Char('4'));
+    press(&mut app, KeyCode::Char('N'));
+    type_str(&mut app, "Brand new");
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.focus, Focus::Side, "new note opens for editing");
+    assert_eq!(
+        app.current_note.as_ref().unwrap().frontmatter.title,
+        "Brand new"
+    );
+    let selected = &app.notes_list[app.notes_sel];
+    assert_eq!(
+        selected.slug,
+        app.current_note.as_ref().unwrap().slug,
+        "list selection tracks the created note"
+    );
+}
+
+#[test]
+fn notes_list_selection_move_previews_without_focus_or_persist() {
+    let dir = TempDir::new().unwrap();
+    let alpha = seed_note(dir.path(), "Alpha note", &["alpha item"]);
+    let beta = seed_note(dir.path(), "Beta note", &["beta item"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+    assert_eq!(app.current_note.as_ref().unwrap().slug, alpha);
+
+    // j previews the next note in the side pane without stealing focus
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.focus, Focus::Main, "preview does not move focus");
+    assert_eq!(
+        app.current_note.as_ref().unwrap().slug,
+        beta,
+        "side pane mirrors the list selection"
+    );
+    let state = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+    assert!(
+        state.contains(&alpha) && !state.contains(&beta),
+        "hover preview is not persisted as last-opened"
+    );
+
+    // enter is the deliberate open: focus moves in and the note is remembered
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.focus, Focus::Side);
+    let state = std::fs::read_to_string(dir.path().join("state.json")).unwrap();
+    assert!(state.contains(&beta), "deliberate open persisted");
+}
+
+#[test]
+fn notes_tab_renders_list_with_counts_and_preview_marker() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Long-term goals", &["read DDIA ch. 8-9"]);
+    seed_note(dir.path(), "Scratch", &["x", "y"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+    let out = render(&app);
+    assert!(out.contains("Long-term goals"), "note title in list");
+    assert!(out.contains("(1 item)"), "singular item count");
+    assert!(out.contains("(2 items)"), "plural item count");
+    assert!(
+        out.contains("preview (enter to edit)"),
+        "side pane flags preview state"
+    );
+    assert!(out.contains("j/k select"), "notes footer hints present");
+
+    press(&mut app, KeyCode::Enter);
+    let focused = render(&app);
+    assert!(
+        !focused.contains("preview (enter to edit)"),
+        "preview marker gone once the side pane is focused"
+    );
+}
+
+#[test]
 fn add_note_item_persists_and_delete_removes_it() {
     let dir = TempDir::new().unwrap();
     let notes = NotesStore::new(dir.path().join("notes"));
@@ -416,8 +728,7 @@ fn add_note_item_persists_and_delete_removes_it() {
     let slug = doc.slug.clone();
 
     let mut app = app_in(dir.path());
-    app.tab = Tab::Notes;
-    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Tab);
     assert_eq!(app.focus, Focus::Side);
 
     press(&mut app, KeyCode::Char('a'));
@@ -436,6 +747,164 @@ fn add_note_item_persists_and_delete_removes_it() {
         .load(&slug)
         .unwrap();
     assert!(after.body.items("Notes").is_empty());
+}
+
+// ---- structured note editing ------------------------------------------------
+
+/// Seed a note with two "First" items ("one", "three") and open it in the
+/// side pane. Rows: heading(0), one(1), three(2).
+fn open_two_item_note(dir: &Path) -> (App, String) {
+    let notes = NotesStore::new(dir.join("notes"));
+    let mut doc = notes.create("Multi", None).unwrap();
+    doc.body.add_item("First", "one");
+    doc.body.add_item("First", "three");
+    notes.save(&mut doc).unwrap();
+
+    let mut app = app_in(dir);
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.focus, Focus::Side);
+    (app, doc.slug)
+}
+
+#[test]
+fn o_inserts_item_below_selected() {
+    let dir = TempDir::new().unwrap();
+    let (mut app, slug) = open_two_item_note(dir.path());
+
+    press(&mut app, KeyCode::Char('j')); // row 1: "one"
+    press(&mut app, KeyCode::Char('o'));
+    type_str(&mut app, "two");
+    press(&mut app, KeyCode::Enter);
+
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load(&slug)
+        .unwrap();
+    assert_eq!(reloaded.body.items("First"), vec!["one", "two", "three"]);
+    assert_eq!(app.note_row_sel, 2, "selection lands on the new item");
+}
+
+#[test]
+fn o_on_heading_inserts_first_item() {
+    let dir = TempDir::new().unwrap();
+    let (mut app, slug) = open_two_item_note(dir.path());
+
+    assert_eq!(app.note_row_sel, 0, "heading row selected on open");
+    press(&mut app, KeyCode::Char('o'));
+    type_str(&mut app, "zero");
+    press(&mut app, KeyCode::Enter);
+
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load(&slug)
+        .unwrap();
+    assert_eq!(reloaded.body.items("First"), vec!["zero", "one", "three"]);
+    assert_eq!(app.note_row_sel, 1, "selection lands on the new first item");
+}
+
+#[test]
+fn capital_a_creates_section_after_current() {
+    let dir = TempDir::new().unwrap();
+    let notes = NotesStore::new(dir.path().join("notes"));
+    let mut doc = notes.create("Sections", None).unwrap();
+    doc.body.add_item("First", "one");
+    doc.body.add_item("Last", "two");
+    notes.save(&mut doc).unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Tab);
+
+    // heading "First" selected (row 0)
+    press(&mut app, KeyCode::Char('A'));
+    type_str(&mut app, "Middle");
+    press(&mut app, KeyCode::Enter);
+
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load(&doc.slug)
+        .unwrap();
+    let headings: Vec<&str> = reloaded
+        .body
+        .sections
+        .iter()
+        .map(|s| s.heading.as_str())
+        .collect();
+    assert_eq!(headings, vec!["First", "Middle", "Last"]);
+    assert_eq!(
+        app.note_row_sel, 2,
+        "selection lands on the new heading row"
+    );
+}
+
+#[test]
+fn add_on_heading_row_targets_that_section() {
+    let dir = TempDir::new().unwrap();
+    let notes = NotesStore::new(dir.path().join("notes"));
+    let mut doc = notes.create("Targeted", None).unwrap();
+    doc.body.add_item("First", "one");
+    doc.body.insert_section_after(None, "Second");
+    notes.save(&mut doc).unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Tab);
+
+    // rows: heading First(0), one(1), heading Second(2)
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('a'));
+    type_str(&mut app, "added");
+    press(&mut app, KeyCode::Enter);
+
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load(&doc.slug)
+        .unwrap();
+    assert_eq!(reloaded.body.items("Second"), vec!["added"]);
+    assert_eq!(reloaded.body.items("First"), vec!["one"]);
+    assert_eq!(app.note_row_sel, 3, "selection lands on the added item");
+}
+
+#[test]
+fn delete_on_heading_row_is_noop_with_footer() {
+    let dir = TempDir::new().unwrap();
+    let (mut app, slug) = open_two_item_note(dir.path());
+
+    assert_eq!(app.note_row_sel, 0, "heading row selected");
+    press(&mut app, KeyCode::Char('D'));
+    assert!(matches!(app.mode, Mode::Normal), "no confirm prompt");
+    assert!(app.footer_msg.is_some(), "footer message shown for D");
+
+    press(&mut app, KeyCode::Char('e'));
+    assert!(matches!(app.mode, Mode::Normal), "no edit input");
+    assert!(app.footer_msg.is_some(), "footer message shown for e");
+
+    let reloaded = NotesStore::new(dir.path().join("notes"))
+        .load(&slug)
+        .unwrap();
+    assert_eq!(reloaded.body.items("First"), vec!["one", "three"]);
+}
+
+#[test]
+fn editor_request_carries_selected_row_file_line() {
+    let dir = TempDir::new().unwrap();
+    let (mut app, slug) = open_two_item_note(dir.path());
+
+    let path = dir.path().join("notes").join(format!("{slug}.md"));
+    let content = std::fs::read_to_string(&path).unwrap();
+    let heading_line = content.lines().position(|l| l == "## First").unwrap() + 1;
+    let item_line = content.lines().position(|l| l == "- one").unwrap() + 1;
+
+    press(&mut app, KeyCode::Char('E'));
+    assert_eq!(
+        app.editor_request,
+        Some((path.clone(), Some(heading_line))),
+        "heading row jumps to the heading's file line"
+    );
+
+    app.editor_request = None;
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('E'));
+    assert_eq!(
+        app.editor_request,
+        Some((path, Some(item_line))),
+        "item row jumps to the item's file line"
+    );
 }
 
 // ---- multi-pane layout & focus ---------------------------------------------
@@ -509,7 +978,7 @@ fn tab_key_toggles_focus_and_reroutes_movement() {
     press(&mut app, KeyCode::Tab);
     assert_eq!(app.focus, Focus::Side);
     press(&mut app, KeyCode::Char('j'));
-    assert_eq!(app.note_item_sel, 1, "j moves the note item when Side");
+    assert_eq!(app.note_row_sel, 1, "j moves the note row when Side");
     assert_eq!(app.today_sel, 1, "task selection untouched");
 
     press(&mut app, KeyCode::Tab);
@@ -599,9 +1068,8 @@ fn last_opened_note_persists_across_sessions() {
 
     {
         let mut app = app_in(dir.path());
-        app.tab = Tab::Notes;
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char(']'));
         assert_eq!(app.current_note.as_ref().unwrap().slug, beta);
     }
     assert!(dir.path().join("state.json").exists(), "state.json written");
@@ -612,7 +1080,7 @@ fn last_opened_note_persists_across_sessions() {
         beta,
         "last-opened note restored"
     );
-    assert_eq!(reopened.notes_sel, 1, "notes list highlight tracks it");
+    assert_eq!(reopened.notes_sel, 1, "note cycling position tracks it");
 }
 
 // ---- editor escape hatch --------------------------------------------------
@@ -642,8 +1110,7 @@ fn editor_request_set_and_roundtrip_reloads_doc() {
     }
 
     let mut app = app_in(dir.path());
-    app.tab = Tab::Notes;
-    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Tab);
     assert_eq!(app.focus, Focus::Side);
 
     press(&mut app, KeyCode::Char('E'));
