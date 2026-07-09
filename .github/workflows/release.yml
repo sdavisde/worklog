@@ -8,6 +8,8 @@ on:
 jobs:
   release:
     runs-on: macos-latest # Apple Silicon (aarch64) runner
+    permissions:
+      contents: write
     outputs:
       arm_sha: ${{ steps.shas.outputs.arm_sha }}
       intel_sha: ${{ steps.shas.outputs.intel_sha }}
