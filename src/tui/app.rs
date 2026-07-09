@@ -446,7 +446,7 @@ impl App {
                 .filter(|t| matches(t))
                 .cloned()
                 .collect();
-            v.sort_by(|a, b| b.completed_at.cmp(&a.completed_at));
+            v.sort_by_key(|b| std::cmp::Reverse(b.completed_at));
             v
         };
 
@@ -568,10 +568,10 @@ impl App {
         if let Some(row) = self.selected_note_row() {
             return row.heading().to_string();
         }
-        if let Some(doc) = &self.current_note {
-            if let Some(s) = doc.body.sections.iter().find(|s| !s.heading.is_empty()) {
-                return s.heading.clone();
-            }
+        if let Some(doc) = &self.current_note
+            && let Some(s) = doc.body.sections.iter().find(|s| !s.heading.is_empty())
+        {
+            return s.heading.clone();
         }
         "Notes".to_string()
     }
@@ -799,12 +799,12 @@ impl App {
         if self.focus != Focus::Main || self.tab != Tab::Notes {
             return Ok(());
         }
-        if let Some(summary) = self.notes_list.get(self.notes_sel) {
-            if self.current_note.as_ref().map(|d| d.slug.as_str()) != Some(summary.slug.as_str()) {
-                let slug = summary.slug.clone();
-                self.current_note = Some(self.notes.load(&slug)?);
-                self.note_row_sel = 0;
-            }
+        if let Some(summary) = self.notes_list.get(self.notes_sel)
+            && self.current_note.as_ref().map(|d| d.slug.as_str()) != Some(summary.slug.as_str())
+        {
+            let slug = summary.slug.clone();
+            self.current_note = Some(self.notes.load(&slug)?);
+            self.note_row_sel = 0;
         }
         Ok(())
     }
@@ -984,10 +984,10 @@ impl App {
             // otherwise unbound while editing (the Normal-mode pane toggle
             // does not apply here), so no-suggestion Tab stays a no-op.
             KeyCode::Tab => {
-                if let Some(suggestion) = self.editing_suggestion() {
-                    if let Mode::Editing(e) = &mut self.mode {
-                        e.accept_suggestion(&suggestion);
-                    }
+                if let Some(suggestion) = self.editing_suggestion()
+                    && let Mode::Editing(e) = &mut self.mode
+                {
+                    e.accept_suggestion(&suggestion);
                 }
             }
             _ => {}
@@ -1008,11 +1008,11 @@ impl App {
     }
 
     fn cancel_editing(&mut self) {
-        if let Mode::Editing(e) = &self.mode {
-            if matches!(e.purpose, EditPurpose::Filter) {
-                self.filter_text.clear();
-                self.tasks_sel = 0;
-            }
+        if let Mode::Editing(e) = &self.mode
+            && matches!(e.purpose, EditPurpose::Filter)
+        {
+            self.filter_text.clear();
+            self.tasks_sel = 0;
         }
         self.mode = Mode::Normal;
     }
@@ -1342,11 +1342,12 @@ fn parse_task_input(raw: &str, categories: &[String]) -> (String, String, Option
                 category = Some(cat.to_string());
                 continue;
             }
-        } else if let Some(proj) = tok.strip_prefix('#') {
-            if project.is_none() && !proj.is_empty() {
-                project = Some(proj.to_string());
-                continue;
-            }
+        } else if let Some(proj) = tok.strip_prefix('#')
+            && project.is_none()
+            && !proj.is_empty()
+        {
+            project = Some(proj.to_string());
+            continue;
         }
         text_tokens.push(tok);
     }

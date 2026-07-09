@@ -26,10 +26,10 @@ pub fn resolve_editor(config: &Config) -> String {
 /// the precedence chain can be unit tested without mutating process
 /// environment (which is `unsafe` under Rust 2024 and forbidden here).
 fn resolve_editor_from(env: Option<String>, config: &Config) -> String {
-    if let Some(editor) = env {
-        if !editor.trim().is_empty() {
-            return editor;
-        }
+    if let Some(editor) = env
+        && !editor.trim().is_empty()
+    {
+        return editor;
     }
     if !config.editor_command.trim().is_empty() {
         return config.editor_command.clone();

@@ -319,7 +319,7 @@ fn parse_daily_note(text: &str) -> DailyNote {
 /// it matches a configured category, else `intake`.
 fn category_for(subsection_name: &str, categories: &[String]) -> String {
     let slug = notes::slugify(subsection_name);
-    if categories.iter().any(|c| *c == slug) {
+    if categories.contains(&slug) {
         slug
     } else {
         "intake".to_string()

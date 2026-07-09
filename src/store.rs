@@ -119,10 +119,10 @@ impl Store {
 }
 
 fn resolve_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("WORKLOG_DIR") {
-        if !dir.is_empty() {
-            return Ok(PathBuf::from(dir));
-        }
+    if let Ok(dir) = std::env::var("WORKLOG_DIR")
+        && !dir.is_empty()
+    {
+        return Ok(PathBuf::from(dir));
     }
     let home = std::env::var("HOME").wrap_err("HOME environment variable is not set")?;
     Ok(PathBuf::from(home).join(".worklog"))

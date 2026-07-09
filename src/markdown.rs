@@ -130,53 +130,49 @@ pub fn parse_inline(input: &str) -> Vec<Inline> {
         };
 
         // `**bold**`
-        if chars[i] == '*' && chars.get(i + 1) == Some(&'*') {
-            if let Some(close) = find_seq(&chars, i + 2, &['*', '*']) {
-                if emphasizable(&chars[i + 2..close]) {
-                    push_literal(&mut literal, &mut out);
-                    out.push(Inline::Bold(chars[i + 2..close].iter().collect()));
-                    i = close + 2;
-                    continue;
-                }
-            }
+        if chars[i] == '*'
+            && chars.get(i + 1) == Some(&'*')
+            && let Some(close) = find_seq(&chars, i + 2, &['*', '*'])
+            && emphasizable(&chars[i + 2..close])
+        {
+            push_literal(&mut literal, &mut out);
+            out.push(Inline::Bold(chars[i + 2..close].iter().collect()));
+            i = close + 2;
+            continue;
         }
         // `*italic*` (single star; the double-star case is handled above)
-        if chars[i] == '*' {
-            if let Some(close) = find_seq(&chars, i + 1, &['*']) {
-                if emphasizable(&chars[i + 1..close]) {
-                    push_literal(&mut literal, &mut out);
-                    out.push(Inline::Italic(chars[i + 1..close].iter().collect()));
-                    i = close + 1;
-                    continue;
-                }
-            }
+        if chars[i] == '*'
+            && let Some(close) = find_seq(&chars, i + 1, &['*'])
+            && emphasizable(&chars[i + 1..close])
+        {
+            push_literal(&mut literal, &mut out);
+            out.push(Inline::Italic(chars[i + 1..close].iter().collect()));
+            i = close + 1;
+            continue;
         }
         // `` `code` ``
-        if chars[i] == '`' {
-            if let Some(close) = find_seq(&chars, i + 1, &['`']) {
-                if close > i + 1 {
-                    push_literal(&mut literal, &mut out);
-                    out.push(Inline::Code(chars[i + 1..close].iter().collect()));
-                    i = close + 1;
-                    continue;
-                }
-            }
+        if chars[i] == '`'
+            && let Some(close) = find_seq(&chars, i + 1, &['`'])
+            && close > i + 1
+        {
+            push_literal(&mut literal, &mut out);
+            out.push(Inline::Code(chars[i + 1..close].iter().collect()));
+            i = close + 1;
+            continue;
         }
         // `[text](url)`
-        if chars[i] == '[' {
-            if let Some(bracket) = find_seq(&chars, i + 1, &[']', '(']) {
-                if let Some(paren) = find_seq(&chars, bracket + 2, &[')']) {
-                    if bracket > i + 1 {
-                        push_literal(&mut literal, &mut out);
-                        out.push(Inline::Link {
-                            text: chars[i + 1..bracket].iter().collect(),
-                            url: chars[bracket + 2..paren].iter().collect(),
-                        });
-                        i = paren + 1;
-                        continue;
-                    }
-                }
-            }
+        if chars[i] == '['
+            && let Some(bracket) = find_seq(&chars, i + 1, &[']', '('])
+            && let Some(paren) = find_seq(&chars, bracket + 2, &[')'])
+            && bracket > i + 1
+        {
+            push_literal(&mut literal, &mut out);
+            out.push(Inline::Link {
+                text: chars[i + 1..bracket].iter().collect(),
+                url: chars[bracket + 2..paren].iter().collect(),
+            });
+            i = paren + 1;
+            continue;
         }
         literal.push(chars[i]);
         i += 1;
