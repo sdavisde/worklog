@@ -2,11 +2,36 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+
+# Note on the GITHUB_TOKEN recursive-trigger limitation:
+# Events raised by the default GITHUB_TOKEN (e.g. the release PR that
+# release-please opens/updates) do NOT trigger further workflow runs. So CI
+# does not run on the release PR itself. That is fine for this solo repo; if
+# branch protection ever requires status checks on that PR, swap the
+# release-please `token:` for a PAT so its pushes trigger CI.
 
 jobs:
-  release:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
     runs-on: macos-latest # Apple Silicon (aarch64) runner
     permissions:
       contents: write
@@ -17,6 +42,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Version-drift tripwire: the release-please tag is derived from the
+      # conventional-commit history; Cargo.toml is bumped by the same tool.
+      # If they ever disagree, `wl --version` would lie — fail loudly instead.
+      - name: assert Cargo.toml version matches release tag
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          cargo_version="v$(cargo pkgid | cut -d'#' -f2)"
+          if [ "${cargo_version}" != "${TAG_NAME}" ]; then
+            echo "::error::version drift: Cargo.toml is ${cargo_version} but release tag is ${TAG_NAME}"
+            exit 1
+          fi
+          echo "version OK: ${cargo_version} == ${TAG_NAME}"
 
       - name: add cross-compile target
         run: rustup target add x86_64-apple-darwin
@@ -64,25 +104,28 @@ jobs:
             echo "These sha256 values are pushed automatically into the tap formula by the update-tap job."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: create release
+      # release-please already created the GitHub release; attach the built
+      # artifacts to it. Notes come from the changelog, so no generate_release_notes.
+      - name: attach artifacts to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
           files: |
             wl-aarch64-apple-darwin.tar.gz
             wl-aarch64-apple-darwin.tar.gz.sha256
             wl-x86_64-apple-darwin.tar.gz
             wl-x86_64-apple-darwin.tar.gz.sha256
-          generate_release_notes: true
 
   update-tap:
-    needs: release
+    needs: [release-please, build]
     runs-on: ubuntu-latest
     steps:
       - name: regenerate and push tap formula
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-          ARM_SHA: ${{ needs.release.outputs.arm_sha }}
-          INTEL_SHA: ${{ needs.release.outputs.intel_sha }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+          ARM_SHA: ${{ needs.build.outputs.arm_sha }}
+          INTEL_SHA: ${{ needs.build.outputs.intel_sha }}
         run: |
           set -euo pipefail
 
@@ -93,7 +136,6 @@ jobs:
             exit 0
           fi
 
-          VERSION="${GITHUB_REF_NAME#v}"
           echo "Updating sdavisde/homebrew-tap to wl ${VERSION}"
 
           git clone "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/sdavisde/homebrew-tap.git" tap
