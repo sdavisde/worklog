@@ -86,10 +86,6 @@ pub struct Theme {
     pub due: Style,
     /// Overdue due dates.
     pub due_overdue: Style,
-    /// INSERT badge in the edit modal.
-    pub insert_mode: Style,
-    /// NORMAL badge in the edit modal.
-    pub normal_mode: Style,
     /// Inline markdown code.
     pub md_code: Style,
     /// Inline markdown links.
@@ -110,14 +106,6 @@ impl Default for Theme {
             project: Style::default().fg(Color::Magenta),
             due: Style::default().fg(Color::Yellow),
             due_overdue: Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            insert_mode: Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-            normal_mode: Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
             md_code: Style::default().fg(Color::Yellow),
             md_link: Style::default()
                 .fg(Color::Blue)
@@ -148,8 +136,6 @@ impl Theme {
         apply!(project);
         apply!(due);
         apply!(due_overdue);
-        apply!(insert_mode);
-        apply!(normal_mode);
         apply!(md_code);
         apply!(md_link);
         Ok(theme)
@@ -180,10 +166,6 @@ pub struct ThemeFile {
     pub due: Option<String>,
     #[serde(default)]
     pub due_overdue: Option<String>,
-    #[serde(default)]
-    pub insert_mode: Option<String>,
-    #[serde(default)]
-    pub normal_mode: Option<String>,
     #[serde(default)]
     pub md_code: Option<String>,
     #[serde(default)]
@@ -289,14 +271,14 @@ mod tests {
 
     #[test]
     fn parses_fg_on_bg() {
-        let style = parse_style("black on yellow", "normal_mode").unwrap();
+        let style = parse_style("black on yellow", "due").unwrap();
         assert_eq!(style.fg, Some(Color::Black));
         assert_eq!(style.bg, Some(Color::Yellow));
     }
 
     #[test]
     fn parses_modifiers() {
-        let style = parse_style("black on yellow bold", "normal_mode").unwrap();
+        let style = parse_style("black on yellow bold", "accent").unwrap();
         assert!(style.add_modifier.contains(Modifier::BOLD));
 
         let style = parse_style("reversed", "selection").unwrap();
@@ -346,8 +328,6 @@ mod tests {
         assert_eq!(theme.project, default.project);
         assert_eq!(theme.due, default.due);
         assert_eq!(theme.due_overdue, default.due_overdue);
-        assert_eq!(theme.insert_mode, default.insert_mode);
-        assert_eq!(theme.normal_mode, default.normal_mode);
         assert_eq!(theme.md_code, default.md_code);
         assert_eq!(theme.md_link, default.md_link);
     }

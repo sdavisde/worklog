@@ -7,7 +7,6 @@ use super::app::{
     App, ConfirmAction, ConfirmState, EditPurpose, EditorRequest, Focus, Mode, Tab, TaskView,
 };
 use super::editor;
-use super::textedit::VimMode;
 use super::views;
 use crate::config::Config;
 use crate::model::{Status, Task};
@@ -410,8 +409,7 @@ fn tab_completes_project_from_active_and_archived_tasks() {
         Mode::TextEdit(te) => assert_eq!(te.text(), "deploy #billing "),
         other => panic!("still editing after tab, got {other:?}"),
     }
-    press(&mut app, KeyCode::Esc); // insert → normal
-    press(&mut app, KeyCode::Esc); // normal → cancel
+    press(&mut app, KeyCode::Esc); // esc cancels
 
     // case-insensitive typing lands on the canonical project name
     press(&mut app, KeyCode::Char('a'));
@@ -508,7 +506,7 @@ fn edit_task_text_persists() {
 }
 
 #[test]
-fn edit_task_esc_to_normal_then_esc_cancels_without_saving() {
+fn edit_task_esc_cancels_without_saving() {
     let dir = TempDir::new().unwrap();
     let store = Store::new(dir.path());
     store
@@ -519,12 +517,7 @@ fn edit_task_esc_to_normal_then_esc_cancels_without_saving() {
     press(&mut app, KeyCode::Char('e'));
     type_str(&mut app, " and more");
     press(&mut app, KeyCode::Esc);
-    match &app.mode {
-        Mode::TextEdit(te) => assert_eq!(te.vim, VimMode::Normal, "esc enters normal mode"),
-        other => panic!("first esc must stay in the modal, got {other:?}"),
-    }
-    press(&mut app, KeyCode::Esc);
-    assert!(matches!(app.mode, Mode::Normal), "second esc cancels");
+    assert!(matches!(app.mode, Mode::Normal), "esc cancels");
     assert_eq!(
         Store::new(dir.path()).load_tasks().unwrap()[0].text,
         "keep me",
@@ -533,46 +526,7 @@ fn edit_task_esc_to_normal_then_esc_cancels_without_saving() {
 }
 
 #[test]
-fn edit_task_normal_mode_ciw_then_enter_persists() {
-    let dir = TempDir::new().unwrap();
-    let store = Store::new(dir.path());
-    store
-        .save_tasks(&[task("old text", "engineering", Status::Open, None)])
-        .unwrap();
-
-    let mut app = app_in(dir.path());
-    press(&mut app, KeyCode::Char('e'));
-    press(&mut app, KeyCode::Esc); // insert → normal, cursor on the last char
-    type_str(&mut app, "ciw"); // change the word under the cursor ("text")
-    type_str(&mut app, "words");
-    press(&mut app, KeyCode::Enter);
-
-    assert!(matches!(app.mode, Mode::Normal));
-    assert_eq!(
-        Store::new(dir.path()).load_tasks().unwrap()[0].text,
-        "old words"
-    );
-}
-
-#[test]
-fn edit_task_normal_mode_dw_then_enter_persists() {
-    let dir = TempDir::new().unwrap();
-    let store = Store::new(dir.path());
-    store
-        .save_tasks(&[task("drop this", "engineering", Status::Open, None)])
-        .unwrap();
-
-    let mut app = app_in(dir.path());
-    press(&mut app, KeyCode::Char('e'));
-    press(&mut app, KeyCode::Esc);
-    type_str(&mut app, "0dw"); // to line start, delete "drop "
-    press(&mut app, KeyCode::Enter);
-
-    assert_eq!(Store::new(dir.path()).load_tasks().unwrap()[0].text, "this");
-}
-
-#[test]
-fn filter_and_due_date_keep_the_lightweight_input() {
+fn filter_and_due_date_use_textedit() {
     let dir = TempDir::new().unwrap();
     let store = Store::new(dir.path());
     store
@@ -584,8 +538,8 @@ fn filter_and_due_date_keep_the_lightweight_input() {
 
     press(&mut app, KeyCode::Char('/'));
     assert!(
-        matches!(&app.mode, Mode::Editing(e) if e.purpose == EditPurpose::Filter),
-        "filter uses the single-line input"
+        matches!(&app.mode, Mode::TextEdit(te) if te.purpose == EditPurpose::Filter),
+        "filter uses the text-edit modal"
     );
     press(&mut app, KeyCode::Esc);
     assert!(
@@ -595,8 +549,8 @@ fn filter_and_due_date_keep_the_lightweight_input() {
 
     press(&mut app, KeyCode::Char('D'));
     assert!(
-        matches!(&app.mode, Mode::Editing(e) if matches!(e.purpose, EditPurpose::DueDate { .. })),
-        "due date uses the single-line input"
+        matches!(&app.mode, Mode::TextEdit(te) if matches!(te.purpose, EditPurpose::DueDate { .. })),
+        "due date uses the text-edit modal"
     );
     press(&mut app, KeyCode::Esc);
     assert!(matches!(app.mode, Mode::Normal));
@@ -613,8 +567,19 @@ fn edit_modal_grows_with_wrapped_content() {
             .position(|l| l.contains(needle))
             .unwrap_or_else(|| panic!("{needle:?} not rendered"))
     };
-    // modal height = rows from the title border to the bottom border + 1
-    let modal_height = |out: &str| row_of(out, "INSERT") - row_of(out, "Add task") + 1;
+    // modal height = rows from the title border down to the modal's own
+    // bottom border (the first all-border row below the title) + 1.
+    let modal_height = |out: &str| {
+        let top = row_of(out, "Add task");
+        let bottom = out
+            .lines()
+            .enumerate()
+            .skip(top + 1)
+            .find(|(_, l)| l.contains('└') && l.contains('┘'))
+            .map(|(i, _)| i)
+            .expect("modal bottom border not rendered");
+        bottom - top + 1
+    };
 
     press(&mut app, KeyCode::Char('a'));
     type_str(&mut app, "alpha");
@@ -784,8 +749,7 @@ fn new_note_key_is_global_across_tabs_and_panes() {
             ),
             "N opens the new-note input after {setup:?}"
         );
-        press(&mut app, KeyCode::Esc); // insert → normal
-        press(&mut app, KeyCode::Esc); // normal → cancel
+        press(&mut app, KeyCode::Esc); // esc cancels
     }
 }
 
@@ -1622,7 +1586,7 @@ fn r_renames_note_from_list_keeping_slug() {
     press(&mut app, KeyCode::Char('4'));
     press(&mut app, KeyCode::Char('r'));
     match &app.mode {
-        Mode::Editing(e) => assert_eq!(e.buffer, "Alpha note", "prefilled with current title"),
+        Mode::TextEdit(te) => assert_eq!(te.text(), "Alpha note", "prefilled with current title"),
         other => panic!("expected rename input, got {other:?}"),
     }
     for _ in 0.."Alpha note".len() {
@@ -1873,7 +1837,6 @@ fn ctrl_o_roundtrips_modal_buffer_through_editor() {
     match &app.mode {
         Mode::TextEdit(te) => {
             assert_eq!(te.text(), "line one line two", "lines joined with spaces");
-            assert_eq!(te.vim, VimMode::Insert, "still in the modal, no submit");
         }
         other => panic!("modal must stay open after the editor, got {other:?}"),
     }

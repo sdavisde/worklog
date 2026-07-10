@@ -10,8 +10,8 @@ mod today;
 use crate::config::NotesPane;
 use crate::model::{Status, Task};
 use crate::theme::Theme;
-use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab, ThemePicker};
-use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit, VimMode};
+use crate::tui::app::{App, CategoryPicker, EditPurpose, Focus, Mode, Tab, ThemePicker};
+use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit};
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
@@ -89,7 +89,6 @@ pub fn draw(app: &App, frame: &mut Frame) {
     render_footer(app, frame, footer);
 
     match &app.mode {
-        Mode::Editing(editing) => render_input(editing, &app.theme, frame, area),
         Mode::TextEdit(te) => render_textedit(app, te, frame, area),
         Mode::CategoryPicker(picker) => render_category_picker(picker, &app.theme, frame, area),
         Mode::ThemePicker(picker) => render_theme_picker(picker, &app.theme, frame, area),
@@ -282,14 +281,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 /// list, so a cramped footer only has to advertise it.
 fn footer_hints(app: &App, width: u16) -> String {
     match &app.mode {
-        Mode::Editing(_) => "enter save · esc cancel".to_string(),
-        Mode::TextEdit(te) => match te.vim {
-            VimMode::Insert if app.editing_suggestion().is_some() => {
-                "enter save · esc normal-mode · tab complete · ctrl+o editor".to_string()
-            }
-            VimMode::Insert => "enter save · esc normal-mode · ctrl+o editor".to_string(),
-            VimMode::Normal => "enter save · esc cancel · i insert · ctrl+o editor".to_string(),
-        },
+        Mode::TextEdit(_) if app.editing_suggestion().is_some() => {
+            "enter save · esc cancel · tab complete · ctrl+o editor".to_string()
+        }
+        Mode::TextEdit(_) => "enter save · esc cancel · ctrl+o editor".to_string(),
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::ThemePicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
@@ -356,29 +351,10 @@ fn input_label(purpose: &EditPurpose) -> &'static str {
     }
 }
 
-/// The lightweight single-line input (filter and due date): a 1-row clipping
-/// box with a terminal cursor. Content edits use [`render_textedit`] instead.
-fn render_input(editing: &Editing, theme: &Theme, frame: &mut Frame, area: Rect) {
-    let rect = centered_rect(area, 60, 3);
-    frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(input_label(&editing.purpose))
-        .border_style(header_style(theme));
-    let inner_width = rect.width.saturating_sub(2);
-
-    let para = Paragraph::new(Line::from(Span::raw(editing.buffer.clone()))).block(block);
-    frame.render_widget(para, rect);
-
-    let cursor_col = (editing.cursor as u16).min(inner_width.saturating_sub(1));
-    frame.set_cursor_position((rect.x + 1 + cursor_col, rect.y + 1));
-}
-
-/// The vim edit modal: a soft-wrapping textarea whose height tracks the
-/// wrapped content (1..=[`MAX_TEXT_ROWS`] text rows, scrolling inside past
-/// the cap), with the vim mode shown in the bottom border. The ghost
-/// `@category`/`#project` completion remainder is overlaid dimmed at the
-/// cursor; its first char keeps the reversed cursor block visible.
+/// The edit modal: a soft-wrapping textarea whose height tracks the wrapped
+/// content (1..=[`MAX_TEXT_ROWS`] text rows, scrolling inside past the cap).
+/// The ghost `@category`/`#project` completion remainder is overlaid dimmed
+/// at the cursor; its first char keeps the reversed cursor block visible.
 fn render_textedit(app: &App, te: &TextEdit, frame: &mut Frame, area: Rect) {
     let [column] = Layout::horizontal([Constraint::Percentage(60)])
         .flex(Flex::Center)
@@ -388,14 +364,9 @@ fn render_textedit(app: &App, te: &TextEdit, frame: &mut Frame, area: Rect) {
     let rect = centered_rect(area, 60, (rows + 2).min(area.height));
     frame.render_widget(Clear, rect);
 
-    let (mode_label, mode_style) = match te.vim {
-        VimMode::Insert => (" INSERT ", app.theme.insert_mode),
-        VimMode::Normal => (" NORMAL ", app.theme.normal_mode),
-    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(input_label(&te.purpose))
-        .title_bottom(Line::from(Span::styled(mode_label, mode_style)))
         .border_style(header_style(&app.theme));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
@@ -559,9 +530,9 @@ fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
         (
             "Editing",
             &[
-                "insert mode: enter save · esc to normal mode · ctrl+o $EDITOR",
-                "insert mode: ctrl/alt+arrows word moves · ctrl+w/u/k kill · ctrl+a/e ends",
-                "normal mode: h l w b e 0 ^ $ f t · d c y x p · u undo · esc cancel",
+                "enter save · esc cancel · ctrl+o open in $EDITOR",
+                "ctrl/alt+arrows word moves · ctrl+w/u/k kill · ctrl+a/e line ends",
+                "ctrl+z undo · ctrl+shift+z redo",
                 "tab accept @category/#project completion (add task)",
             ],
         ),

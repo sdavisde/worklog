@@ -14,7 +14,7 @@ use crate::standup::{StandupReport, build_report};
 use crate::store::Store;
 use crate::theme::{self, Theme};
 use crate::tui::editor;
-use crate::tui::textedit::{Outcome, TextEdit, VimMode};
+use crate::tui::textedit::{Outcome, TextEdit};
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -122,59 +122,6 @@ pub struct ThemePicker {
     pub themes: Vec<Theme>,
 }
 
-/// A single-line input buffer with a char-index cursor.
-#[derive(Debug, Clone)]
-pub struct Editing {
-    pub purpose: EditPurpose,
-    pub buffer: String,
-    pub cursor: usize,
-}
-
-impl Editing {
-    fn new(purpose: EditPurpose, buffer: String) -> Self {
-        let cursor = buffer.chars().count();
-        Self {
-            purpose,
-            buffer,
-            cursor,
-        }
-    }
-
-    fn byte_at(&self, char_idx: usize) -> usize {
-        self.buffer
-            .char_indices()
-            .nth(char_idx)
-            .map(|(b, _)| b)
-            .unwrap_or(self.buffer.len())
-    }
-
-    fn insert(&mut self, c: char) {
-        let byte = self.byte_at(self.cursor);
-        self.buffer.insert(byte, c);
-        self.cursor += 1;
-    }
-
-    fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_at(self.cursor - 1);
-        let end = self.byte_at(self.cursor);
-        self.buffer.replace_range(start..end, "");
-        self.cursor -= 1;
-    }
-
-    fn left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
-    }
-
-    fn right(&mut self) {
-        if self.cursor < self.buffer.chars().count() {
-            self.cursor += 1;
-        }
-    }
-}
-
 /// A pending destructive action awaiting confirmation. The prompt and the
 /// action are carried explicitly so the confirm handler never has to
 /// re-derive *what* to delete from the current focus/tab/selection state.
@@ -200,14 +147,13 @@ pub enum ConfirmAction {
     DeleteNote { slug: String },
 }
 
-/// Input mode: normal navigation, the lightweight single-line input (filter
-/// and due date), the vim edit modal (all content edits), a closed-list
-/// picker (task category, or the `'` note switcher), a confirm dialog
-/// (default-yes: Enter confirms), or the `?` keybinds overlay.
+/// Input mode: normal navigation, the text-edit modal (every content/field
+/// edit — filter, due date, task/note text), a closed-list picker (task
+/// category, or the `'` note switcher), a confirm dialog (default-yes: Enter
+/// confirms), or the `?` keybinds overlay.
 #[derive(Debug, Clone)]
 pub enum Mode {
     Normal,
-    Editing(Editing),
     TextEdit(Box<TextEdit>),
     CategoryPicker(CategoryPicker),
     /// `ctrl+t`: pick + live-preview the color theme.
@@ -469,20 +415,15 @@ impl App {
     /// the add-task modal's cursor, if one applies. `None` in every other
     /// mode/purpose: editing an existing task's text does not re-parse
     /// tokens (see [`EditPurpose::EditTask`] in `commit_edit`), so offering
-    /// completions there would suggest behavior that doesn't exist. Normal
-    /// mode gets no ghost either — `tab` only completes while inserting.
+    /// completions there would suggest behavior that doesn't exist.
     pub fn editing_suggestion(&self) -> Option<TokenSuggestion> {
         match &self.mode {
-            Mode::TextEdit(te)
-                if te.purpose == EditPurpose::AddTask && te.vim == VimMode::Insert =>
-            {
-                suggest_token_completion(
-                    te.text(),
-                    te.cursor_col(),
-                    &self.config.categories,
-                    &self.project_candidates(),
-                )
-            }
+            Mode::TextEdit(te) if te.purpose == EditPurpose::AddTask => suggest_token_completion(
+                te.text(),
+                te.cursor_col(),
+                &self.config.categories,
+                &self.project_candidates(),
+            ),
             _ => None,
         }
     }
@@ -690,7 +631,6 @@ impl App {
         }
         self.footer_msg = None;
         match self.mode {
-            Mode::Editing(_) => self.handle_editing_key(key)?,
             Mode::TextEdit(_) => self.handle_textedit_key(key)?,
             Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
             Mode::ThemePicker(_) => self.handle_theme_picker_key(key)?,
@@ -832,10 +772,10 @@ impl App {
             KeyCode::Char('D') => {
                 if let Some(sel) = self.selected_active_task() {
                     let prefill = sel.due.map(|d| d.to_string()).unwrap_or_default();
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::DueDate { id: sel.id.clone() },
                         prefill,
-                    ));
+                    )));
                 }
             }
             KeyCode::Char('d') => {
@@ -852,8 +792,10 @@ impl App {
                 self.tasks_sel = 0;
             }
             KeyCode::Char('/') if self.tab == Tab::Tasks => {
-                self.mode =
-                    Mode::Editing(Editing::new(EditPurpose::Filter, self.filter_text.clone()));
+                self.mode = Mode::TextEdit(Box::new(TextEdit::new(
+                    EditPurpose::Filter,
+                    self.filter_text.clone(),
+                )));
             }
             KeyCode::Char('c') if self.tab == Tab::Tasks => self.cycle_category(),
             KeyCode::Char('p') if self.tab == Tab::Tasks => self.cycle_project(),
@@ -873,12 +815,12 @@ impl App {
             }
             KeyCode::Char('r') => {
                 if let Some(summary) = self.notes_list.get(self.notes_sel) {
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::RenameNote {
                             slug: summary.slug.clone(),
                         },
                         summary.title.clone(),
-                    ));
+                    )));
                 }
             }
             KeyCode::Char('d') => {
@@ -999,12 +941,12 @@ impl App {
             }
             KeyCode::Char('r') => {
                 if let Some(doc) = &self.current_note {
-                    self.mode = Mode::Editing(Editing::new(
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
                         EditPurpose::RenameNote {
                             slug: doc.slug.clone(),
                         },
                         doc.frontmatter.title.clone(),
-                    ));
+                    )));
                 }
             }
             KeyCode::Char('e') => match self.selected_note_row() {
@@ -1142,63 +1084,13 @@ impl App {
         Ok(())
     }
 
-    fn handle_editing_key(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Enter => self.commit_editing()?,
-            KeyCode::Esc => self.cancel_editing(),
-            KeyCode::Char(c) => {
-                if let Mode::Editing(e) = &mut self.mode {
-                    e.insert(c);
-                }
-                self.after_editing_change();
-            }
-            KeyCode::Backspace => {
-                if let Mode::Editing(e) = &mut self.mode {
-                    e.backspace();
-                }
-                self.after_editing_change();
-            }
-            KeyCode::Left => {
-                if let Mode::Editing(e) = &mut self.mode {
-                    e.left();
-                }
-            }
-            KeyCode::Right => {
-                if let Mode::Editing(e) = &mut self.mode {
-                    e.right();
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Live-apply incremental filter text as the user types.
-    fn after_editing_change(&mut self) {
-        let buf = match &self.mode {
-            Mode::Editing(e) if matches!(e.purpose, EditPurpose::Filter) => Some(e.buffer.clone()),
-            _ => None,
-        };
-        if let Some(b) = buf {
-            self.filter_text = b;
-            self.tasks_sel = 0;
-        }
-    }
-
-    fn cancel_editing(&mut self) {
-        if let Mode::Editing(e) = &self.mode
-            && matches!(e.purpose, EditPurpose::Filter)
-        {
-            self.filter_text.clear();
-            self.tasks_sel = 0;
-        }
-        self.mode = Mode::Normal;
-    }
-
-    /// The vim edit modal's key handler: `tab` accepts the inline completion
-    /// (insert mode, add-task only — `editing_suggestion` is `None`
+    /// The text-edit modal's key handler: `tab` accepts the inline
+    /// completion (add-task only — `editing_suggestion` is `None`
     /// otherwise), everything else goes to the modal's own state machine and
-    /// its [`Outcome`] decides what happens app-side.
+    /// its [`Outcome`] decides what happens app-side. A `Filter` edit lives
+    /// as `filter_text` outside the modal, so its outcome also mirrors the
+    /// buffer into (`Consumed`) or reverts (`Cancel`) that field, matching
+    /// the live-narrowing/cancel-clears filter behavior.
     fn handle_textedit_key(&mut self, key: KeyEvent) -> Result<()> {
         if key.code == KeyCode::Tab {
             let suggestion = self.editing_suggestion();
@@ -1214,8 +1106,27 @@ impl App {
             _ => return Ok(()),
         };
         match outcome {
-            Outcome::Consumed => {}
-            Outcome::Cancel => self.mode = Mode::Normal,
+            Outcome::Consumed => {
+                let filter_text = match &self.mode {
+                    Mode::TextEdit(te) if te.purpose == EditPurpose::Filter => {
+                        Some(te.text().to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(filter_text) = filter_text {
+                    self.filter_text = filter_text;
+                    self.tasks_sel = 0;
+                }
+            }
+            Outcome::Cancel => {
+                if let Mode::TextEdit(te) = &self.mode
+                    && te.purpose == EditPurpose::Filter
+                {
+                    self.filter_text.clear();
+                    self.tasks_sel = 0;
+                }
+                self.mode = Mode::Normal;
+            }
             Outcome::Submit => self.commit_textedit()?,
             Outcome::OpenEditor => self.request_modal_editor(),
         }
@@ -1237,14 +1148,6 @@ impl App {
             Ok(()) => self.editor_request = Some(EditorRequest::ModalBuffer { path }),
             Err(e) => self.footer_msg = Some(format!("failed to write temp file: {e}")),
         }
-    }
-
-    fn commit_editing(&mut self) -> Result<()> {
-        let editing = match &self.mode {
-            Mode::Editing(e) => e.clone(),
-            _ => return Ok(()),
-        };
-        self.commit_edit(editing.purpose, editing.buffer)
     }
 
     fn commit_textedit(&mut self) -> Result<()> {

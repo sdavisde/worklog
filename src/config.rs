@@ -99,11 +99,11 @@ notes_pane: auto
 #   vesper               /
 #   <anything else>    - loaded from ~/.worklog/themes/<name>.yaml
 #
-# A theme file sets any of 13 style slots (accent, selection, muted, hint,
-# error, category, project, due, due_overdue, insert_mode, normal_mode,
-# md_code, md_link); slots it omits keep the default theme's value, so a
-# two-line file that only overrides `accent` is perfectly valid. Each slot is
-# a compact style string: <fg-color>? (on <bg-color>)? <modifier>*, e.g.
+# A theme file sets any of 11 style slots (accent, selection, muted, hint,
+# error, category, project, due, due_overdue, md_code, md_link); slots it
+# omits keep the default theme's value, so a two-line file that only
+# overrides `accent` is perfectly valid. Each slot is a compact style
+# string: <fg-color>? (on <bg-color>)? <modifier>*, e.g.
 # cyan bold, black on yellow bold, a hex color like #89b4fa, or reversed.
 # Colors may be named (cyan, darkgray, ...), hex (#rrggbb), or an indexed
 # terminal color (0-255); modifiers are bold, dim, italic, underlined,

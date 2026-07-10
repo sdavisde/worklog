@@ -210,13 +210,11 @@ name is rejected rather than silently ignored.
 | `project` | `#project` tags |
 | `due` | due dates |
 | `due_overdue` | due dates in the past |
-| `insert_mode` | the `INSERT` badge in the edit modal |
-| `normal_mode` | the `NORMAL` badge in the edit modal |
 | `md_code` | inline `` `code` `` in notes |
 | `md_link` | inline `[links]` in notes |
 
 The three bundled presets ([`themes/*.yaml`](./themes) in this repo) are full
-13-slot examples to copy from.
+11-slot examples to copy from.
 
 ## Data model
 
