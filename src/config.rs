@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// Where the TUI renders the notes detail pane relative to the active tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotesPane {
+    /// Sidebar in wide terminals, bottom pane in narrow ones (default).
+    #[default]
+    Auto,
+    /// Always alongside the active tab, on the right.
+    Right,
+    /// Always below the active tab.
+    Bottom,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_categories")]
@@ -13,6 +26,9 @@ pub struct Config {
     /// `$EDITOR` environment variable is unset.
     #[serde(default = "default_editor_command")]
     pub editor_command: String,
+    /// Position of the notes detail pane: `auto`, `right`, or `bottom`.
+    #[serde(default)]
+    pub notes_pane: NotesPane,
 }
 
 impl Default for Config {
@@ -20,6 +36,7 @@ impl Default for Config {
         Config {
             categories: default_categories(),
             editor_command: default_editor_command(),
+            notes_pane: NotesPane::default(),
         }
     }
 }
@@ -56,6 +73,12 @@ categories:
 # editor_command: fallback editor used by the TUI's $EDITOR escape hatch
 # when the $EDITOR environment variable is not set.
 editor_command: nvim
+
+# notes_pane: where the TUI draws the notes detail pane. One of:
+#   auto   - sidebar in wide terminals, bottom pane in narrow ones (default)
+#   right  - always alongside the active tab, on the right
+#   bottom - always below the active tab
+notes_pane: auto
 "#;
 
 /// Load `config.yaml` from `path`, or write the commented default file and
@@ -127,5 +150,31 @@ mod tests {
         let config = load_or_create(&path).unwrap();
         assert_eq!(config.categories, vec!["solo".to_string()]);
         assert_eq!(config.editor_command, "nvim");
+    }
+
+    #[test]
+    fn missing_notes_pane_defaults_to_auto() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "categories:\n  - solo\n").unwrap();
+
+        let config = load_or_create(&path).unwrap();
+        assert_eq!(config.notes_pane, NotesPane::Auto);
+    }
+
+    #[test]
+    fn notes_pane_values_parse() {
+        for (value, expected) in [
+            ("auto", NotesPane::Auto),
+            ("right", NotesPane::Right),
+            ("bottom", NotesPane::Bottom),
+        ] {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("config.yaml");
+            fs::write(&path, format!("notes_pane: {value}\n")).unwrap();
+
+            let config = load_or_create(&path).unwrap();
+            assert_eq!(config.notes_pane, expected);
+        }
     }
 }

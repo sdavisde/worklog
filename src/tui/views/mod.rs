@@ -7,6 +7,7 @@ mod standup;
 mod tasks;
 mod today;
 
+use crate::config::NotesPane;
 use crate::model::{Status, Task};
 use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab};
 use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit, VimMode};
@@ -17,9 +18,22 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-/// Minimum body width for the two-pane layout; below this only the focused
-/// pane renders, full width.
+/// Minimum body width for the side-by-side layout; below this a right/auto
+/// split can't fit two panes, so it falls back to the focused pane full width.
 const SPLIT_MIN_WIDTH: u16 = 80;
+
+/// Minimum body height for the stacked layout; below this a bottom/auto split
+/// would leave the notes pane too short, so it falls back to the focused pane
+/// full height. At 20 rows the 40% pane still clears ~8 rows.
+const SPLIT_MIN_HEIGHT: u16 = 20;
+
+/// Orientation of the resolved main/notes body split for a given frame.
+enum SplitDir {
+    /// Notes pane alongside the active tab, on the right.
+    Right,
+    /// Notes pane below the active tab.
+    Bottom,
+}
 
 /// Entry point: tab bar on top, footer below, and a main/side body split with
 /// the notes pane always alongside the active tab. Any active input box /
@@ -35,17 +49,39 @@ pub fn draw(app: &App, frame: &mut Frame) {
 
     render_tab_bar(app, frame, tabs);
 
-    if body.width >= SPLIT_MIN_WIDTH {
-        let [main, side] =
-            Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-                .areas(body);
-        render_main(app, frame, main, app.focus == Focus::Main);
-        notes::render_detail(app, frame, side, app.focus == Focus::Side);
-    } else {
-        // narrow fallback: only the focused pane, full width
-        match app.focus {
-            Focus::Main => render_main(app, frame, body, true),
-            Focus::Side => notes::render_detail(app, frame, body, true),
+    // Resolve the configured preference to a concrete orientation for this
+    // frame: `auto` prefers the sidebar when wide and falls back to a bottom
+    // pane when narrow-but-tall, hiding a pane only when both narrow and short.
+    let split = match app.config.notes_pane {
+        NotesPane::Right => (body.width >= SPLIT_MIN_WIDTH).then_some(SplitDir::Right),
+        NotesPane::Bottom => (body.height >= SPLIT_MIN_HEIGHT).then_some(SplitDir::Bottom),
+        NotesPane::Auto => {
+            if body.width >= SPLIT_MIN_WIDTH {
+                Some(SplitDir::Right)
+            } else if body.height >= SPLIT_MIN_HEIGHT {
+                Some(SplitDir::Bottom)
+            } else {
+                None
+            }
+        }
+    };
+
+    match split {
+        Some(dir) => {
+            let constraints = [Constraint::Percentage(60), Constraint::Percentage(40)];
+            let [main, side] = match dir {
+                SplitDir::Right => Layout::horizontal(constraints).areas(body),
+                SplitDir::Bottom => Layout::vertical(constraints).areas(body),
+            };
+            render_main(app, frame, main, app.focus == Focus::Main);
+            notes::render_detail(app, frame, side, app.focus == Focus::Side);
+        }
+        None => {
+            // cramped fallback: only the focused pane, using the whole body
+            match app.focus {
+                Focus::Main => render_main(app, frame, body, true),
+                Focus::Side => notes::render_detail(app, frame, body, true),
+            }
         }
     }
 

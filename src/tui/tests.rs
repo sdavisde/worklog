@@ -1181,15 +1181,33 @@ fn narrow_terminal_shows_only_the_focused_pane() {
         .unwrap();
     seed_note(dir.path(), "Narrow note", &["hidden item"]);
 
+    // Both narrow and short: neither a right nor a bottom split fits, so auto
+    // collapses to the single focused pane.
     let mut app = app_in(dir.path());
-    let main_only = render_sized(&app, 60, 40);
+    let main_only = render_sized(&app, 60, 15);
     assert!(main_only.contains("wide task"), "focused main pane shown");
     assert!(!main_only.contains("hidden item"), "side pane hidden");
 
     press(&mut app, KeyCode::Tab);
-    let side_only = render_sized(&app, 60, 40);
+    let side_only = render_sized(&app, 60, 15);
     assert!(side_only.contains("hidden item"), "focused side pane shown");
     assert!(!side_only.contains("wide task"), "main pane hidden");
+}
+
+#[test]
+fn narrow_but_tall_terminal_stacks_both_panes() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("stacked task", "engineering", Status::Open, None)])
+        .unwrap();
+    seed_note(dir.path(), "Stacked note", &["stacked item"]);
+
+    // Too narrow for a sidebar but tall enough for a bottom pane: auto stacks.
+    let app = app_in(dir.path());
+    let out = render_sized(&app, 60, 40);
+    assert!(out.contains("stacked task"), "main pane shown");
+    assert!(out.contains("stacked item"), "notes pane shown below");
 }
 
 #[test]

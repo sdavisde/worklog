@@ -71,6 +71,7 @@ mod tests {
         Config {
             categories: vec![],
             editor_command: editor_command.to_string(),
+            ..Config::default()
         }
     }
 
