@@ -254,10 +254,10 @@ fn footer_hints(app: &App, width: u16) -> String {
         Mode::Editing(_) => "enter save · esc cancel".to_string(),
         Mode::TextEdit(te) => match te.vim {
             VimMode::Insert if app.editing_suggestion().is_some() => {
-                "enter save · esc normal-mode · tab complete · ctrl+e editor".to_string()
+                "enter save · esc normal-mode · tab complete · ctrl+o editor".to_string()
             }
-            VimMode::Insert => "enter save · esc normal-mode · ctrl+e editor".to_string(),
-            VimMode::Normal => "enter save · esc cancel · i insert · ctrl+e editor".to_string(),
+            VimMode::Insert => "enter save · esc normal-mode · ctrl+o editor".to_string(),
+            VimMode::Normal => "enter save · esc cancel · i insert · ctrl+o editor".to_string(),
         },
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
@@ -518,7 +518,8 @@ fn render_help(frame: &mut Frame, area: Rect) {
         (
             "Editing",
             &[
-                "insert mode: enter save · esc to normal mode · ctrl+e $EDITOR",
+                "insert mode: enter save · esc to normal mode · ctrl+o $EDITOR",
+                "insert mode: ctrl/alt+arrows word moves · ctrl+w/u/k kill · ctrl+a/e ends",
                 "normal mode: h l w b e 0 ^ $ f t · d c y x p · u undo · esc cancel",
                 "tab accept @category/#project completion (add task)",
             ],

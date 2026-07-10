@@ -138,7 +138,7 @@ impl TextEdit {
         rows
     }
 
-    /// Replace the whole buffer (the `ctrl+e` editor round-trip): lines are
+    /// Replace the whole buffer (the `ctrl+o` editor round-trip): lines are
     /// joined with single spaces and the result trimmed. Preserves the yank
     /// register and keeps the change undoable.
     pub fn set_text(&mut self, text: &str) {
@@ -184,23 +184,56 @@ impl TextEdit {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Outcome {
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('e') => return Outcome::OpenEditor,
-                KeyCode::Char('r') if self.vim == VimMode::Normal => {
-                    self.textarea.redo();
-                    self.clamp_normal_col();
-                }
-                _ => {}
-            }
-            return Outcome::Consumed;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if ctrl && key.code == KeyCode::Char('o') {
+            return Outcome::OpenEditor;
         }
         if key.code == KeyCode::Enter {
             return Outcome::Submit;
         }
+        // Readline/word-wise chords apply in both modes: they all carry a
+        // modifier, so they never shadow the plain-letter vim keys.
+        if let Some(action) = chord_action(key.code, ctrl, alt, self.vim) {
+            self.pending = Pending::None;
+            self.apply_chord(action);
+            return Outcome::Consumed;
+        }
+        if ctrl {
+            if self.vim == VimMode::Normal && key.code == KeyCode::Char('r') {
+                self.textarea.redo();
+                self.clamp_normal_col();
+            }
+            return Outcome::Consumed;
+        }
         match self.vim {
             VimMode::Insert => self.handle_insert_key(key),
             VimMode::Normal => self.handle_normal_key(key),
+        }
+    }
+
+    /// Apply a readline-style chord (see [`chord_action`]). Deletions go
+    /// through the textarea like the vim operators, so they fill the yank
+    /// register and land in the undo history.
+    fn apply_chord(&mut self, action: ChordAction) {
+        let chars = self.chars();
+        let len = chars.len();
+        let col = self.cursor_col();
+        match action {
+            ChordAction::WordLeft => self.jump(word_back(&chars, col)),
+            ChordAction::WordRight => {
+                let target = word_forward(&chars, col);
+                match self.vim {
+                    VimMode::Insert => self.jump(target),
+                    VimMode::Normal => self.jump(target.min(len.saturating_sub(1))),
+                }
+            }
+            ChordAction::Head => self.jump(0),
+            ChordAction::End => self.textarea.move_cursor(CursorMove::End),
+            ChordAction::DeleteWordBack => self.delete_range(word_back(&chars, col), col),
+            ChordAction::DeleteWordForward => self.delete_range(col, word_forward(&chars, col)),
+            ChordAction::DeleteToHead => self.delete_range(0, col),
+            ChordAction::DeleteToEnd => self.delete_range(col, len),
         }
     }
 
@@ -434,17 +467,29 @@ impl TextEdit {
                 }
                 self.jump(start);
             }
-            Op::Delete | Op::Change => {
+            Op::Delete => self.delete_range(start, end),
+            Op::Change => {
                 self.jump(start);
                 if end > start {
                     self.textarea.delete_str(end - start);
                 }
-                if op == Op::Change {
-                    self.vim = VimMode::Insert;
-                } else {
-                    self.clamp_normal_col();
-                }
+                self.vim = VimMode::Insert;
             }
+        }
+    }
+
+    /// Delete the char range `start..end` through the textarea (filling the
+    /// yank register), keeping the normal-mode cursor invariant when in
+    /// normal mode. In insert mode the cursor may legally sit at `len`.
+    fn delete_range(&mut self, start: usize, end: usize) {
+        let end = end.min(self.chars().len());
+        let start = start.min(end);
+        self.jump(start);
+        if end > start {
+            self.textarea.delete_str(end - start);
+        }
+        if self.vim == VimMode::Normal {
+            self.clamp_normal_col();
         }
     }
 
@@ -486,6 +531,43 @@ impl TextEdit {
         if self.cursor_col() > max {
             self.jump(max);
         }
+    }
+}
+
+/// A readline-style word-wise action bound to a modifier chord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChordAction {
+    WordLeft,
+    WordRight,
+    Head,
+    End,
+    DeleteWordBack,
+    DeleteWordForward,
+    DeleteToHead,
+    DeleteToEnd,
+}
+
+/// Map a modifier chord to its readline action, accepting every common
+/// encoding per action. The emacs-letter chords (`ctrl+a`/`e`/`u`/`k`) are
+/// insert-only so normal mode stays purely vim; the arrow/backspace/delete
+/// chords and `alt` letters apply in both modes since they cannot collide
+/// with plain-letter vim keys.
+fn chord_action(code: KeyCode, ctrl: bool, alt: bool, vim: VimMode) -> Option<ChordAction> {
+    let insert = vim == VimMode::Insert;
+    match code {
+        KeyCode::Left if ctrl || alt => Some(ChordAction::WordLeft),
+        KeyCode::Right if ctrl || alt => Some(ChordAction::WordRight),
+        KeyCode::Char('b') if alt && !ctrl => Some(ChordAction::WordLeft),
+        KeyCode::Char('f') if alt && !ctrl => Some(ChordAction::WordRight),
+        KeyCode::Backspace if ctrl || alt => Some(ChordAction::DeleteWordBack),
+        KeyCode::Char('w') if ctrl => Some(ChordAction::DeleteWordBack),
+        KeyCode::Delete if ctrl || alt => Some(ChordAction::DeleteWordForward),
+        KeyCode::Char('d') if alt && !ctrl => Some(ChordAction::DeleteWordForward),
+        KeyCode::Char('a') if ctrl && insert => Some(ChordAction::Head),
+        KeyCode::Char('e') if ctrl && insert => Some(ChordAction::End),
+        KeyCode::Char('u') if ctrl && insert => Some(ChordAction::DeleteToHead),
+        KeyCode::Char('k') if ctrl && insert => Some(ChordAction::DeleteToEnd),
+        _ => None,
     }
 }
 
@@ -645,6 +727,10 @@ mod tests {
         te.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
     }
 
+    fn chord(te: &mut TextEdit, code: KeyCode, mods: KeyModifiers) -> Outcome {
+        te.handle_key(KeyEvent::new(code, mods))
+    }
+
     /// A modal over `text` in normal mode, cursor on the last char.
     fn normal(text: &str) -> TextEdit {
         let mut te = TextEdit::new(EditPurpose::AddTask, text.to_string());
@@ -690,11 +776,135 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_e_opens_editor_from_both_modes() {
+    fn ctrl_o_opens_editor_from_both_modes() {
         let mut te = TextEdit::new(EditPurpose::AddTask, "x".to_string());
-        assert_eq!(ctrl(&mut te, 'e'), Outcome::OpenEditor);
+        assert_eq!(ctrl(&mut te, 'o'), Outcome::OpenEditor);
         press(&mut te, KeyCode::Esc);
-        assert_eq!(ctrl(&mut te, 'e'), Outcome::OpenEditor);
+        assert_eq!(ctrl(&mut te, 'o'), Outcome::OpenEditor);
+    }
+
+    #[test]
+    fn ctrl_e_is_line_end_not_editor() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "abc".to_string());
+        press(&mut te, KeyCode::Home);
+        assert_eq!(ctrl(&mut te, 'e'), Outcome::Consumed);
+        assert_eq!(te.cursor_col(), 3, "ctrl+e jumps to line end in insert");
+        press(&mut te, KeyCode::Esc);
+        assert_eq!(ctrl(&mut te, 'e'), Outcome::Consumed);
+        assert_eq!(te.text(), "abc", "ctrl+e is inert in normal mode");
+    }
+
+    #[test]
+    fn insert_word_chords_move_word_wise() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar baz".to_string());
+        assert_eq!(te.cursor_col(), 11);
+        chord(&mut te, KeyCode::Left, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 8, "ctrl+left to word start");
+        chord(&mut te, KeyCode::Char('b'), KeyModifiers::ALT);
+        assert_eq!(te.cursor_col(), 4, "alt+b to previous word");
+        chord(&mut te, KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(te.cursor_col(), 0, "alt+left to line start word");
+        chord(&mut te, KeyCode::Right, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 4, "ctrl+right to next word");
+        chord(&mut te, KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(te.cursor_col(), 8, "alt+f to next word");
+        chord(&mut te, KeyCode::Right, KeyModifiers::ALT);
+        assert_eq!(te.cursor_col(), 11, "insert mode may sit at line end");
+    }
+
+    #[test]
+    fn insert_ctrl_a_jumps_to_line_start() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar".to_string());
+        assert_eq!(ctrl(&mut te, 'a'), Outcome::Consumed);
+        assert_eq!(te.cursor_col(), 0);
+    }
+
+    #[test]
+    fn insert_delete_word_back_variants_fill_register() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar".to_string());
+        ctrl(&mut te, 'w');
+        assert_eq!(te.text(), "foo ");
+        assert_eq!(te.cursor_col(), 4);
+        assert_eq!(te.textarea().yank_text(), "bar", "kill fills the register");
+
+        press_str(&mut te, "qux");
+        chord(&mut te, KeyCode::Backspace, KeyModifiers::ALT);
+        assert_eq!(te.text(), "foo ", "alt+backspace variant");
+        assert_eq!(te.textarea().yank_text(), "qux");
+
+        press_str(&mut te, "zed");
+        chord(&mut te, KeyCode::Backspace, KeyModifiers::CONTROL);
+        assert_eq!(te.text(), "foo ", "ctrl+backspace variant");
+        assert_eq!(te.textarea().yank_text(), "zed");
+    }
+
+    #[test]
+    fn insert_delete_word_forward_variants_fill_register() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar baz".to_string());
+        ctrl(&mut te, 'a');
+        chord(&mut te, KeyCode::Delete, KeyModifiers::CONTROL);
+        assert_eq!(te.text(), "bar baz", "ctrl+delete kills to next word");
+        assert_eq!(te.textarea().yank_text(), "foo ");
+        chord(&mut te, KeyCode::Char('d'), KeyModifiers::ALT);
+        assert_eq!(te.text(), "baz", "alt+d variant");
+        assert_eq!(te.textarea().yank_text(), "bar ");
+    }
+
+    #[test]
+    fn insert_ctrl_u_and_ctrl_k_kill_to_line_ends() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar".to_string());
+        chord(&mut te, KeyCode::Left, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 4);
+        ctrl(&mut te, 'u');
+        assert_eq!(te.text(), "bar", "ctrl+u kills to line start");
+        assert_eq!(te.textarea().yank_text(), "foo ");
+
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar".to_string());
+        chord(&mut te, KeyCode::Left, KeyModifiers::CONTROL);
+        ctrl(&mut te, 'k');
+        assert_eq!(te.text(), "foo ", "ctrl+k kills to line end");
+        assert_eq!(te.cursor_col(), 4, "insert cursor may sit at line end");
+        assert_eq!(te.textarea().yank_text(), "bar");
+    }
+
+    #[test]
+    fn killed_text_pastes_back_with_vim_p() {
+        let mut te = TextEdit::new(EditPurpose::AddTask, "foo bar".to_string());
+        ctrl(&mut te, 'w');
+        press(&mut te, KeyCode::Esc);
+        press(&mut te, KeyCode::Char('p'));
+        assert_eq!(te.text(), "foo bar", "register round-trips through p");
+    }
+
+    #[test]
+    fn normal_mode_word_chords_and_vim_keys_coexist() {
+        let mut te = normal("foo bar baz");
+        press(&mut te, KeyCode::Char('0'));
+        chord(&mut te, KeyCode::Right, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 4, "ctrl+right word motion in normal");
+        chord(&mut te, KeyCode::Right, KeyModifiers::CONTROL);
+        chord(&mut te, KeyCode::Right, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 10, "clamped to the last char");
+        chord(&mut te, KeyCode::Left, KeyModifiers::CONTROL);
+        assert_eq!(te.cursor_col(), 8, "ctrl+left word motion in normal");
+        ctrl(&mut te, 'w');
+        assert_eq!(te.text(), "foo baz", "ctrl+w kills word back in normal");
+        assert_eq!(te.vim, VimMode::Normal, "no mode change");
+        press(&mut te, KeyCode::Char('b'));
+        assert_eq!(te.cursor_col(), 0, "plain vim b still wins in normal");
+        press(&mut te, KeyCode::Char('w'));
+        assert_eq!(te.cursor_col(), 4, "plain vim w still wins in normal");
+    }
+
+    #[test]
+    fn normal_mode_chord_clears_a_pending_operator() {
+        let mut te = normal("foo bar");
+        press(&mut te, KeyCode::Char('d'));
+        chord(&mut te, KeyCode::Left, KeyModifiers::CONTROL);
+        assert_eq!(te.text(), "foo bar", "chord aborts the pending operator");
+        press(&mut te, KeyCode::Char('w'));
+        assert_eq!(te.text(), "foo bar", "w moves instead of completing dw");
+        assert_eq!(te.cursor_col(), 6, "w clamps to the last char");
     }
 
     #[test]

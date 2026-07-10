@@ -16,7 +16,11 @@ use crate::store::Store;
 use app::App;
 use color_eyre::eyre::Result;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{
+    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
+use ratatui::crossterm::{execute, terminal};
 
 /// Open the TUI: resolve storage/config, initialize the terminal (raw mode,
 /// alternate screen, panic hook — all via `ratatui::init`), run the loop, and
@@ -34,6 +38,13 @@ pub fn run() -> Result<()> {
 }
 
 fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
+    let mut kitty = push_keyboard_enhancement();
+    let result = run_loop_inner(terminal, app, &mut kitty);
+    pop_keyboard_enhancement(kitty);
+    result
+}
+
+fn run_loop_inner(terminal: &mut DefaultTerminal, app: &mut App, kitty: &mut bool) -> Result<()> {
     loop {
         terminal.draw(|frame| views::draw(app, frame))?;
 
@@ -41,19 +52,45 @@ fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> Result<()> {
             break;
         }
 
+        // `App::handle_key` filters to `KeyEventKind::Press`, which also
+        // covers the Release/Repeat events the kitty protocol may report.
         if let Event::Key(key) = event::read()? {
             app.handle_key(key)?;
         }
 
-        // Editor escape hatch: suspend the TUI, run $EDITOR, always re-init.
+        // Editor escape hatch: suspend the TUI (dropping the keyboard
+        // enhancement flags with it), run $EDITOR, always re-init both.
         if app.editor_request.is_some() {
             let editor_cmd = editor::resolve_editor(&app.config);
+            pop_keyboard_enhancement(*kitty);
             ratatui::restore();
             let outcome = app.run_editor(&editor_cmd);
             *terminal = ratatui::init();
+            *kitty = push_keyboard_enhancement();
             let _ = terminal.clear();
             outcome?;
         }
     }
     Ok(())
+}
+
+/// Enable the kitty keyboard protocol's escape-code disambiguation when the
+/// terminal supports it, so chords like `ctrl+backspace` are distinguishable
+/// from plain `backspace`. Returns whether the flags were pushed; the caller
+/// must pop them again before leaving the alternate screen. Terminals
+/// without the protocol degrade gracefully — `alt+backspace`/`ctrl+w` still
+/// cover delete-word-back.
+fn push_keyboard_enhancement() -> bool {
+    matches!(terminal::supports_keyboard_enhancement(), Ok(true))
+        && execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )
+        .is_ok()
+}
+
+fn pop_keyboard_enhancement(pushed: bool) {
+    if pushed {
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
 }

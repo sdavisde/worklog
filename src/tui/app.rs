@@ -220,7 +220,7 @@ pub enum EditorRequest {
     /// `E` on a note row: open the note file, optionally jumping to the
     /// selected row's 1-based file line.
     NoteFile { path: PathBuf, line: Option<usize> },
-    /// `ctrl+e` in the edit modal: round-trip the buffer through a temp
+    /// `ctrl+o` in the edit modal: round-trip the buffer through a temp
     /// file, then put the (joined, trimmed) result back into the modal.
     ModalBuffer { path: PathBuf },
 }
@@ -1107,7 +1107,7 @@ impl App {
         Ok(())
     }
 
-    /// Queue the `ctrl+e` escape hatch: seed a temp file with the modal
+    /// Queue the `ctrl+o` escape hatch: seed a temp file with the modal
     /// buffer and let the event loop run `$EDITOR` on it.
     fn request_modal_editor(&mut self) {
         let Mode::TextEdit(te) = &self.mode else {

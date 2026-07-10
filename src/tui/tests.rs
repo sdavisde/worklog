@@ -1704,7 +1704,7 @@ fn notes_footer_and_help_advertise_rename_and_move() {
 }
 
 #[test]
-fn ctrl_e_roundtrips_modal_buffer_through_editor() {
+fn ctrl_o_roundtrips_modal_buffer_through_editor() {
     let dir = TempDir::new().unwrap();
 
     // a stub editor that replaces the temp file with multi-line content
@@ -1727,9 +1727,9 @@ fn ctrl_e_roundtrips_modal_buffer_through_editor() {
     press(&mut app, KeyCode::Char('a'));
     type_str(&mut app, "first draft");
 
-    press_ctrl(&mut app, 'e');
+    press_ctrl(&mut app, 'o');
     let Some(EditorRequest::ModalBuffer { path }) = app.editor_request.clone() else {
-        panic!("ctrl+e must queue a modal-buffer editor request");
+        panic!("ctrl+o must queue a modal-buffer editor request");
     };
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
