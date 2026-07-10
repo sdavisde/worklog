@@ -166,8 +166,8 @@ needs no configuration. Select a different theme with the `theme` key in
 theme: catppuccin-mocha
 ```
 
-Three presets ship built in — `catppuccin-mocha`, `gruvbox-dark`, and
-`dracula` — and need no extra files. Anything else is loaded from
+Four presets ship built in — `catppuccin-mocha`, `gruvbox-dark`, `dracula`,
+and `vesper` — and need no extra files. Anything else is loaded from
 `~/.worklog/themes/<name>.yaml`; a `theme:` that resolves to neither a preset
 nor a file is a startup error listing the names it does know.
 

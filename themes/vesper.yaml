@@ -1,0 +1,25 @@
+# Vesper for wl.
+#
+# Rauno Freiberg's minimal, warm-monochrome dark theme
+# (https://github.com/raunofreiberg/vesper), matched to herdr's `vesper`
+# built-in palette:
+#   surface #101010 · text #ffffff · overlay #7e7e7e · line #5c5c5c
+#   peach #ffc799 (signature accent) · mauve #ffd1a8 · mint #99ffe4
+#   teal #66ddcc · red #ff8080 · (no blue)
+#
+# Every slot is a compact style string: "<fg>? (on <bg>)? <modifier>*".
+# Drop any slot to fall back to wl's built-in default for it.
+
+accent: "#ffc799 bold"
+selection: "#101010 on #ffc799 bold"
+muted: "#7e7e7e"
+hint: "#5c5c5c"
+error: "#ff8080"
+category: "#99ffe4"
+project: "#ffd1a8"
+due: "#ffc799"
+due_overdue: "#ff8080 bold"
+insert_mode: "#101010 on #ffc799 bold"
+normal_mode: "#101010 on #99ffe4 bold"
+md_code: "#ffc799"
+md_link: "#66ddcc underlined"

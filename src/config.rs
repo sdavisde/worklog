@@ -94,8 +94,9 @@ notes_pane: auto
 #   default            - built purely from named ANSI colors, so the TUI
 #                         inherits your terminal's own palette (default)
 #   catppuccin-mocha    \
-#   gruvbox-dark         > built-in presets, no extra files needed
-#   dracula             /
+#   gruvbox-dark         \
+#   dracula               > built-in presets, no extra files needed
+#   vesper               /
 #   <anything else>    - loaded from ~/.worklog/themes/<name>.yaml
 #
 # A theme file sets any of 13 style slots (accent, selection, muted, hint,

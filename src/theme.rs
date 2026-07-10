@@ -23,6 +23,7 @@ const BUILTINS: &[(&str, &str)] = &[
     ),
     ("gruvbox-dark", include_str!("../themes/gruvbox-dark.yaml")),
     ("dracula", include_str!("../themes/dracula.yaml")),
+    ("vesper", include_str!("../themes/vesper.yaml")),
 ];
 
 /// Names of every theme `theme::load` will accept, for error messages.
@@ -373,6 +374,7 @@ mod tests {
         assert!(msg.contains("catppuccin-mocha"));
         assert!(msg.contains("gruvbox-dark"));
         assert!(msg.contains("dracula"));
+        assert!(msg.contains("vesper"));
     }
 
     #[test]
@@ -430,7 +432,13 @@ mod tests {
         assert!(!store.themes_dir().exists());
         assert_eq!(
             available(&store),
-            vec!["default", "catppuccin-mocha", "gruvbox-dark", "dracula"]
+            vec![
+                "default",
+                "catppuccin-mocha",
+                "gruvbox-dark",
+                "dracula",
+                "vesper"
+            ]
         );
     }
 
@@ -449,6 +457,7 @@ mod tests {
                 "catppuccin-mocha",
                 "gruvbox-dark",
                 "dracula",
+                "vesper",
                 "mytheme"
             ]
         );
@@ -465,7 +474,13 @@ mod tests {
         assert_eq!(names.iter().filter(|n| *n == "dracula").count(), 1);
         assert_eq!(
             names,
-            vec!["default", "catppuccin-mocha", "gruvbox-dark", "dracula"]
+            vec![
+                "default",
+                "catppuccin-mocha",
+                "gruvbox-dark",
+                "dracula",
+                "vesper"
+            ]
         );
     }
 
