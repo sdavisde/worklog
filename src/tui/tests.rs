@@ -3,7 +3,9 @@
 //! the same `handle_key` path the event loop uses. All I/O is confined to
 //! `tempfile` temp dirs; nothing touches a real `~/.worklog`.
 
-use super::app::{App, EditPurpose, EditorRequest, Focus, Mode, Tab, TaskView};
+use super::app::{
+    App, ConfirmAction, ConfirmState, EditPurpose, EditorRequest, Focus, Mode, Tab, TaskView,
+};
 use super::editor;
 use super::textedit::VimMode;
 use super::views;
@@ -294,8 +296,8 @@ fn question_mark_opens_help_overlay_and_any_key_closes() {
     assert!(out.contains("Global"), "groups rendered");
     assert!(out.contains("Notes pane"), "notes group rendered");
 
-    // any key closes without acting: 'D' must not open a delete confirm
-    press(&mut app, KeyCode::Char('D'));
+    // any key closes without acting: 'd' must not open a delete confirm
+    press(&mut app, KeyCode::Char('d'));
     assert!(matches!(app.mode, Mode::Normal), "overlay dismissed");
     let after = render(&app);
     assert!(!after.contains("Keybinds"), "overlay gone");
@@ -591,7 +593,7 @@ fn filter_and_due_date_keep_the_lightweight_input() {
         "one esc cancels the filter"
     );
 
-    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('D'));
     assert!(
         matches!(&app.mode, Mode::Editing(e) if matches!(e.purpose, EditPurpose::DueDate { .. })),
         "due date uses the single-line input"
@@ -643,7 +645,7 @@ fn due_date_set_and_invalid_input_shows_footer_error() {
         .unwrap();
 
     let mut app = app_in(dir.path());
-    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('D'));
     type_str(&mut app, "2026-08-01");
     press(&mut app, KeyCode::Enter);
     assert_eq!(
@@ -652,7 +654,7 @@ fn due_date_set_and_invalid_input_shows_footer_error() {
     );
 
     // invalid date: footer error, no crash, due unchanged
-    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('D'));
     for _ in 0.."2026-08-01".len() {
         press(&mut app, KeyCode::Backspace);
     }
@@ -724,13 +726,19 @@ fn delete_confirm_and_cancel() {
     let mut app = app_in(dir.path());
 
     // cancel keeps the task
-    press(&mut app, KeyCode::Char('D'));
-    assert!(matches!(app.mode, Mode::ConfirmDelete));
+    press(&mut app, KeyCode::Char('d'));
+    assert!(matches!(
+        app.mode,
+        Mode::Confirm(ConfirmState {
+            action: ConfirmAction::DeleteTask,
+            ..
+        })
+    ));
     press(&mut app, KeyCode::Char('n'));
     assert_eq!(Store::new(dir.path()).load_tasks().unwrap().len(), 1);
 
     // confirm removes it
-    press(&mut app, KeyCode::Char('D'));
+    press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Char('y'));
     assert!(Store::new(dir.path()).load_tasks().unwrap().is_empty());
 }
@@ -883,7 +891,7 @@ fn add_note_item_persists_and_delete_removes_it() {
     assert_eq!(reloaded.body.items("Notes"), vec!["ship the thing"]);
 
     // delete it via confirm
-    press(&mut app, KeyCode::Char('D'));
+    press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Char('y'));
     let after = NotesStore::new(dir.path().join("notes"))
         .load(&slug)
@@ -1008,9 +1016,9 @@ fn delete_on_heading_row_is_noop_with_footer() {
     let (mut app, slug) = open_two_item_note(dir.path());
 
     assert_eq!(app.note_row_sel, 0, "heading row selected");
-    press(&mut app, KeyCode::Char('D'));
+    press(&mut app, KeyCode::Char('d'));
     assert!(matches!(app.mode, Mode::Normal), "no confirm prompt");
-    assert!(app.footer_msg.is_some(), "footer message shown for D");
+    assert!(app.footer_msg.is_some(), "footer message shown for d");
 
     press(&mut app, KeyCode::Char('e'));
     assert!(matches!(app.mode, Mode::Normal), "no edit input");
@@ -1743,6 +1751,67 @@ fn notes_missing_from_persisted_order_append_and_stale_entries_drop() {
     let app = app_in(dir.path());
     let slugs: Vec<&str> = app.notes_list.iter().map(|s| s.slug.as_str()).collect();
     assert_eq!(slugs, ["alpha-note", "aaa-note"]);
+}
+
+#[test]
+fn lowercase_d_deletes_note_via_bare_enter() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Keeper note", &["a"]);
+    seed_note(dir.path(), "Doomed note", &["b"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4')); // Notes tab
+    // slug-sorted: "doomed-note" is first, so it's selected on entry.
+    assert_eq!(app.notes_list[app.notes_sel].slug, "doomed-note");
+
+    // d opens the shared confirm carrying the target slug
+    press(&mut app, KeyCode::Char('d'));
+    assert!(matches!(
+        &app.mode,
+        Mode::Confirm(ConfirmState { action: ConfirmAction::DeleteNote { slug }, .. })
+            if slug == "doomed-note"
+    ));
+
+    // bare Enter (no y needed) confirms
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(app.mode, Mode::Normal));
+
+    let slugs: Vec<&str> = app.notes_list.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, ["keeper-note"], "deleted note gone from the list");
+    assert!(
+        !dir.path().join("notes").join("doomed-note.md").exists(),
+        "note file removed from disk"
+    );
+    // the side pane no longer references the deleted note
+    assert_ne!(
+        app.current_note.as_ref().map(|d| d.slug.as_str()),
+        Some("doomed-note")
+    );
+}
+
+#[test]
+fn note_delete_cancel_keeps_the_note() {
+    let dir = TempDir::new().unwrap();
+    seed_note(dir.path(), "Survivor", &["a"]);
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('4'));
+
+    // n cancels
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('n'));
+    assert!(matches!(app.mode, Mode::Normal));
+    assert!(dir.path().join("notes").join("survivor.md").exists());
+
+    // Esc cancels too
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Esc);
+    assert!(matches!(app.mode, Mode::Normal));
+    assert!(
+        dir.path().join("notes").join("survivor.md").exists(),
+        "note survives cancel"
+    );
+    assert_eq!(app.notes_list.len(), 1);
 }
 
 #[test]

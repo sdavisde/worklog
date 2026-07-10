@@ -367,6 +367,14 @@ impl NotesStore {
             .wrap_err_with(|| format!("renaming into {}", path.display()))?;
         Ok(())
     }
+
+    /// Delete the note doc for `slug`, removing its file from disk. Backs the
+    /// Notes TUI list view's `D` delete-note action.
+    pub fn delete(&self, slug: &str) -> Result<()> {
+        let path = self.path_for(slug);
+        fs::remove_file(&path).wrap_err_with(|| format!("removing {}", path.display()))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -562,6 +570,22 @@ mod tests {
                 ("zebra-notes".to_string(), "Zebra Notes".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn delete_removes_file_and_drops_from_list() {
+        let dir = tempdir().unwrap();
+        let store = NotesStore::new(dir.path());
+        store.create("Keeper", None).unwrap();
+        store.create("Doomed", None).unwrap();
+
+        assert!(dir.path().join("doomed.md").exists());
+        store.delete("doomed").unwrap();
+        assert!(!dir.path().join("doomed.md").exists());
+
+        let listed = store.list().unwrap();
+        assert_eq!(listed, vec![("keeper".to_string(), "Keeper".to_string())]);
+        assert!(store.delete("doomed").is_err(), "deleting again errors");
     }
 
     #[test]

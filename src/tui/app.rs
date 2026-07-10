@@ -175,10 +175,35 @@ impl Editing {
     }
 }
 
+/// A pending destructive action awaiting confirmation. The prompt and the
+/// action are carried explicitly so the confirm handler never has to
+/// re-derive *what* to delete from the current focus/tab/selection state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmState {
+    /// Human-readable question rendered in the modal, e.g. `Delete task?`.
+    pub prompt: String,
+    pub action: ConfirmAction,
+}
+
+/// What a confirmed [`Mode::Confirm`] will do. Each variant carries whatever
+/// the action needs, so the confirm is self-contained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+// The shared `Delete` prefix names *what* is deleted; that shared verb is the
+// point (this is the app's delete-confirmation dispatch), so keep it readable.
+#[allow(clippy::enum_variant_names)]
+pub enum ConfirmAction {
+    /// Delete the currently selected active task (Today/Tasks tab).
+    DeleteTask,
+    /// Delete the selected item within the open note (side pane).
+    DeleteNoteItem,
+    /// Delete a whole note doc by slug (Notes tab list).
+    DeleteNote { slug: String },
+}
+
 /// Input mode: normal navigation, the lightweight single-line input (filter
 /// and due date), the vim edit modal (all content edits), a closed-list
-/// picker (task category, or the `'` note switcher), a y/n confirm, or the
-/// `?` keybinds overlay.
+/// picker (task category, or the `'` note switcher), a confirm dialog
+/// (default-yes: Enter confirms), or the `?` keybinds overlay.
 #[derive(Debug, Clone)]
 pub enum Mode {
     Normal,
@@ -192,7 +217,9 @@ pub enum Mode {
     NotePicker {
         selected: usize,
     },
-    ConfirmDelete,
+    /// The one shared confirmation dialog for every destructive action.
+    /// Defaults to "yes": Enter (or `y`) confirms, `n`/Esc cancels.
+    Confirm(ConfirmState),
     Help,
 }
 
@@ -668,7 +695,7 @@ impl App {
             Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
             Mode::ThemePicker(_) => self.handle_theme_picker_key(key)?,
             Mode::NotePicker { .. } => self.handle_note_picker_key(key)?,
-            Mode::ConfirmDelete => self.handle_confirm_key(key)?,
+            Mode::Confirm(_) => self.handle_confirm_key(key)?,
             // any key dismisses the keybinds overlay
             Mode::Help => self.mode = Mode::Normal,
             Mode::Normal => self.handle_normal_key(key)?,
@@ -802,7 +829,7 @@ impl App {
                     });
                 }
             }
-            KeyCode::Char('d') => {
+            KeyCode::Char('D') => {
                 if let Some(sel) = self.selected_active_task() {
                     let prefill = sel.due.map(|d| d.to_string()).unwrap_or_default();
                     self.mode = Mode::Editing(Editing::new(
@@ -811,9 +838,12 @@ impl App {
                     ));
                 }
             }
-            KeyCode::Char('D') => {
+            KeyCode::Char('d') => {
                 if self.selected_active_task().is_some() {
-                    self.mode = Mode::ConfirmDelete;
+                    self.mode = Mode::Confirm(ConfirmState {
+                        prompt: "Delete task?".to_string(),
+                        action: ConfirmAction::DeleteTask,
+                    });
                 }
             }
             // Tasks-tab-only status view + filters
@@ -849,6 +879,16 @@ impl App {
                         },
                         summary.title.clone(),
                     ));
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(summary) = self.notes_list.get(self.notes_sel) {
+                    self.mode = Mode::Confirm(ConfirmState {
+                        prompt: format!("Delete note \"{}\"?", summary.title),
+                        action: ConfirmAction::DeleteNote {
+                            slug: summary.slug.clone(),
+                        },
+                    });
                 }
             }
             // reorder: the selection follows the moved note
@@ -987,8 +1027,13 @@ impl App {
                 }
                 None => {}
             },
-            KeyCode::Char('D') => match self.selected_note_row() {
-                Some(NoteRow::Item { .. }) => self.mode = Mode::ConfirmDelete,
+            KeyCode::Char('d') => match self.selected_note_row() {
+                Some(NoteRow::Item { .. }) => {
+                    self.mode = Mode::Confirm(ConfirmState {
+                        prompt: "Delete item?".to_string(),
+                        action: ConfirmAction::DeleteNoteItem,
+                    });
+                }
                 Some(NoteRow::Heading { .. }) => {
                     self.footer_msg = Some("select an item to delete".to_string());
                 }
@@ -1008,11 +1053,18 @@ impl App {
         Ok(())
     }
 
+    /// The one shared confirm handler for every destructive action. Defaults
+    /// to "yes": Enter (or `y`/`Y`) performs the carried action; `n`/`N`/Esc
+    /// cancels. Either way we return to `Mode::Normal`.
     fn handle_confirm_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                self.perform_delete()?;
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let action = match &self.mode {
+                    Mode::Confirm(state) => state.action.clone(),
+                    _ => return Ok(()),
+                };
                 self.mode = Mode::Normal;
+                self.perform_confirm(action)?;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -1022,9 +1074,18 @@ impl App {
         Ok(())
     }
 
-    fn perform_delete(&mut self) -> Result<()> {
-        match self.focus {
-            Focus::Side => {
+    /// Dispatch a confirmed action on the payload carried by [`Mode::Confirm`],
+    /// rather than re-deriving it from the current focus/tab/selection.
+    fn perform_confirm(&mut self, action: ConfirmAction) -> Result<()> {
+        match action {
+            ConfirmAction::DeleteTask => {
+                if let Some(sel) = self.selected_task() {
+                    self.tasks.retain(|t| t.id != sel.id);
+                    self.store.save_tasks(&self.tasks)?;
+                    self.reload()?;
+                }
+            }
+            ConfirmAction::DeleteNoteItem => {
                 if let Some(NoteRow::Item {
                     heading,
                     item_index,
@@ -1038,16 +1099,45 @@ impl App {
                     self.reload_current_note()?;
                 }
             }
-            Focus::Main => match self.tab {
-                Tab::Today | Tab::Tasks => {
-                    if let Some(sel) = self.selected_task() {
-                        self.tasks.retain(|t| t.id != sel.id);
-                        self.store.save_tasks(&self.tasks)?;
-                        self.reload()?;
-                    }
-                }
-                _ => {}
-            },
+            ConfirmAction::DeleteNote { slug } => self.delete_note(&slug)?,
+        }
+        Ok(())
+    }
+
+    /// Delete a whole note doc and repair every piece of UI/session state that
+    /// referenced it: the persisted note order, the last-opened note, the open
+    /// side-pane note, and the clamped selection indices.
+    fn delete_note(&mut self, slug: &str) -> Result<()> {
+        self.notes.delete(slug)?;
+
+        // If the deleted note was open in the side pane, close it.
+        if self.current_note.as_ref().map(|d| d.slug.as_str()) == Some(slug) {
+            self.current_note = None;
+        }
+        // Drop the slug from the persisted order (also refreshed by reload's
+        // stale-entry pruning, but persist eagerly so state.json is correct
+        // even without a later reorder).
+        let mut order = self.load_note_order();
+        order.retain(|s| s != slug);
+        self.write_state_key("note_order", serde_json::json!(order));
+        // Drop last_note if it pointed at the deleted note.
+        if self.load_last_note_slug().as_deref() == Some(slug) {
+            let mut state = self.read_state();
+            state.remove("last_note");
+            let v = serde_json::Value::Object(state);
+            let _ = std::fs::write(self.store.state_path(), format!("{v}\n"));
+        }
+
+        self.reload()?;
+
+        // Re-open whatever note the selection now lands on (if any), so the
+        // side pane never keeps referencing a deleted note.
+        if self.current_note.is_none() && !self.notes_list.is_empty() {
+            let idx = self.notes_sel.min(self.notes_list.len() - 1);
+            let reopened = self.notes.load(&self.notes_list[idx].slug)?;
+            self.current_note = Some(reopened);
+            self.notes_sel = idx;
+            self.note_row_sel = 0;
         }
         Ok(())
     }

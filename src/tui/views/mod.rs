@@ -94,7 +94,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
         Mode::CategoryPicker(picker) => render_category_picker(picker, &app.theme, frame, area),
         Mode::ThemePicker(picker) => render_theme_picker(picker, &app.theme, frame, area),
         Mode::NotePicker { selected } => render_note_picker(app, *selected, frame, area),
-        Mode::ConfirmDelete => render_confirm(&app.theme, frame, area),
+        Mode::Confirm(state) => render_confirm(&state.prompt, &app.theme, frame, area),
         Mode::Help => render_help(&app.theme, frame, area),
         Mode::Normal => {}
     }
@@ -293,7 +293,7 @@ fn footer_hints(app: &App, width: u16) -> String {
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::ThemePicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
-        Mode::ConfirmDelete => "delete? y / n".to_string(),
+        Mode::Confirm(_) => "confirm? enter/y = yes · n = no".to_string(),
         Mode::Help => "any key to close".to_string(),
         Mode::Normal => {
             let [full, medium] = match app.focus {
@@ -325,9 +325,9 @@ fn footer_hints(app: &App, width: u16) -> String {
                         "1-4 tabs · ? keys · q quit".to_string(),
                     ],
                     Tab::Notes => [
-                        "j/k select · enter open · r rename · J/K move · N new · tab side pane · ? keys · q quit"
+                        "j/k select · enter open · r rename · D del · J/K move · N new · tab side pane · ? keys · q quit"
                             .to_string(),
-                        "enter open · r rename · J/K move · N new · ? keys · q quit".to_string(),
+                        "enter open · r rename · D del · J/K move · N new · ? keys · q quit".to_string(),
                     ],
                 },
             };
@@ -535,7 +535,7 @@ fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
             "Today & Tasks",
             &[
                 "a add · space/x done · b block · e edit",
-                "d due date · C category · D delete",
+                "D due date · C category · d delete",
             ],
         ),
         (
@@ -546,14 +546,14 @@ fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
             "Notes tab",
             &[
                 "j/k preview in side pane · enter open · N new note",
-                "r rename · J/K move note up/down (order persists)",
+                "r rename · d delete note · J/K move note up/down (order persists)",
             ],
         ),
         (
             "Notes pane",
             &[
                 "a add item · o insert below · A new section · r rename note",
-                "e edit · D delete · E open in $EDITOR · [/] switch note",
+                "e edit · d delete · E open in $EDITOR · [/] switch note",
             ],
         ),
         (
@@ -606,14 +606,21 @@ fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
     );
 }
 
-fn render_confirm(theme: &Theme, frame: &mut Frame, area: Rect) {
-    let rect = centered_rect(area, 40, 3);
+/// The one shared confirmation modal. Renders the carried `prompt` and an
+/// answer line that marks "Yes" as the default (Enter confirms).
+fn render_confirm(prompt: &str, theme: &Theme, frame: &mut Frame, area: Rect) {
+    let rect = centered_rect(area, 40, 4);
     frame.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Confirm")
         .border_style(theme.error);
-    let para = Paragraph::new("Delete? (y/n)").block(block);
+    let answer = Line::from(vec![
+        Span::styled("[Y]es", selection_style(theme).add_modifier(Modifier::BOLD)),
+        Span::styled(" / ", theme.hint),
+        Span::styled("[n]o", theme.hint),
+    ]);
+    let para = Paragraph::new(vec![Line::from(prompt.to_string()), answer]).block(block);
     frame.render_widget(para, rect);
 }
 
