@@ -1,0 +1,23 @@
+# Catppuccin Mocha for wl.
+#
+# https://github.com/catppuccin/catppuccin — Mocha palette reference:
+#   base #1e1e2e · text #cdd6f4 · overlay0 #6c7086
+#   blue #89b4fa · mauve #cba6f7 · green #a6e3a1 · yellow #f9e2af
+#   red #f38ba8 · sapphire #74c7ec
+#
+# Every slot is a compact style string: "<fg>? (on <bg>)? <modifier>*".
+# Drop any slot to fall back to wl's built-in default for it.
+
+accent: "#89b4fa bold"
+selection: "#1e1e2e on #89b4fa bold"
+muted: "#6c7086"
+hint: "#6c7086"
+error: "#f38ba8"
+category: "#a6e3a1"
+project: "#cba6f7"
+due: "#f9e2af"
+due_overdue: "#f38ba8 bold"
+insert_mode: "#1e1e2e on #89b4fa bold"
+normal_mode: "#1e1e2e on #f9e2af bold"
+md_code: "#f9e2af"
+md_link: "#89b4fa underlined"

@@ -50,6 +50,13 @@ impl Store {
         self.dir.join("notes")
     }
 
+    /// User theme files (`<name>.yaml`), consulted by `theme::load` before
+    /// falling back to an embedded preset. No eager create: `theme::load`
+    /// just checks whether it exists.
+    pub fn themes_dir(&self) -> PathBuf {
+        self.dir.join("themes")
+    }
+
     pub fn config_path(&self) -> PathBuf {
         self.dir.join("config.yaml")
     }

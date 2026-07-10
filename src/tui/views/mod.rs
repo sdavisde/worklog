@@ -9,12 +9,13 @@ mod today;
 
 use crate::config::NotesPane;
 use crate::model::{Status, Task};
-use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab};
+use crate::theme::Theme;
+use crate::tui::app::{App, CategoryPicker, EditPurpose, Editing, Focus, Mode, Tab, ThemePicker};
 use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit, VimMode};
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -88,12 +89,13 @@ pub fn draw(app: &App, frame: &mut Frame) {
     render_footer(app, frame, footer);
 
     match &app.mode {
-        Mode::Editing(editing) => render_input(editing, frame, area),
+        Mode::Editing(editing) => render_input(editing, &app.theme, frame, area),
         Mode::TextEdit(te) => render_textedit(app, te, frame, area),
-        Mode::CategoryPicker(picker) => render_category_picker(picker, frame, area),
+        Mode::CategoryPicker(picker) => render_category_picker(picker, &app.theme, frame, area),
+        Mode::ThemePicker(picker) => render_theme_picker(picker, &app.theme, frame, area),
         Mode::NotePicker { selected } => render_note_picker(app, *selected, frame, area),
-        Mode::ConfirmDelete => render_confirm(frame, area),
-        Mode::Help => render_help(frame, area),
+        Mode::ConfirmDelete => render_confirm(&app.theme, frame, area),
+        Mode::Help => render_help(&app.theme, frame, area),
         Mode::Normal => {}
     }
 }
@@ -128,9 +130,9 @@ fn render_tab_bar(app: &App, frame: &mut Frame, area: Rect) {
     let mut spans = vec![Span::raw(" ")];
     for (tab, label) in labels {
         let style = if app.tab == tab {
-            header_style()
+            header_style(&app.theme)
         } else {
-            dim_style()
+            dim_style(&app.theme)
         };
         spans.push(Span::styled(label, style));
         spans.push(Span::raw("  "));
@@ -140,23 +142,21 @@ fn render_tab_bar(app: &App, frame: &mut Frame, area: Rect) {
 
 // ---- shared styling helpers -----------------------------------------------
 
-pub(super) fn selection_style() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
+pub(super) fn selection_style(theme: &Theme) -> Style {
+    theme.selection
 }
 
-pub(super) fn dim_style() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
+pub(super) fn dim_style(theme: &Theme) -> Style {
+    theme.muted
 }
 
-pub(super) fn header_style() -> Style {
-    Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
+pub(super) fn header_style(theme: &Theme) -> Style {
+    theme.accent
 }
 
 /// Ellipsis-truncate a styled line to `width` columns (this app's content is
 /// ASCII-leaning, so chars ≈ columns). ratatui's `List` clips hard otherwise.
-pub(super) fn truncate_line(line: Line<'static>, width: usize) -> Line<'static> {
+pub(super) fn truncate_line(line: Line<'static>, width: usize, theme: &Theme) -> Line<'static> {
     let total: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
     if total <= width || width == 0 {
         return line;
@@ -178,7 +178,7 @@ pub(super) fn truncate_line(line: Line<'static>, width: usize) -> Line<'static> 
         }
         break;
     }
-    out.push(Span::styled("…", dim_style()));
+    out.push(Span::styled("…", dim_style(theme)));
     Line::from(out)
 }
 
@@ -193,10 +193,14 @@ pub(super) fn truncate_str(s: &str, width: usize) -> String {
 }
 
 /// Bordered pane block: the focused pane gets the highlighted border.
-pub(super) fn pane_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
+pub(super) fn pane_block(
+    title: impl Into<Line<'static>>,
+    focused: bool,
+    theme: &Theme,
+) -> Block<'static> {
     let block = Block::default().borders(Borders::ALL).title(title);
     if focused {
-        block.border_style(header_style())
+        block.border_style(header_style(theme))
     } else {
         block
     }
@@ -212,27 +216,21 @@ fn status_marker(status: Status) -> &'static str {
 
 /// Row for an active task: marker, text, `@category`, `#project`, due date
 /// (overdue in red).
-pub(super) fn task_line(task: &Task, today: NaiveDate) -> Line<'static> {
+pub(super) fn task_line(task: &Task, today: NaiveDate, theme: &Theme) -> Line<'static> {
     let mut spans = vec![
         Span::raw(status_marker(task.status)),
         Span::raw(task.text.clone()),
-        Span::styled(
-            format!("  @{}", task.category),
-            Style::default().fg(Color::Green),
-        ),
+        Span::styled(format!("  @{}", task.category), theme.category),
     ];
     if let Some(project) = &task.project {
-        spans.push(Span::styled(
-            format!(" #{project}"),
-            Style::default().fg(Color::Magenta),
-        ));
+        spans.push(Span::styled(format!(" #{project}"), theme.project));
     }
     if let Some(due) = task.due {
         let overdue = due < today;
         let style = if overdue {
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+            theme.due_overdue
         } else {
-            Style::default().fg(Color::Yellow)
+            theme.due
         };
         spans.push(Span::styled(format!("  due {due}"), style));
     }
@@ -240,16 +238,16 @@ pub(super) fn task_line(task: &Task, today: NaiveDate) -> Line<'static> {
 }
 
 /// Dimmed row for a completed task (Today view footer / Standup completions).
-pub(super) fn completed_line(task: &Task) -> Line<'static> {
+pub(super) fn completed_line(task: &Task, theme: &Theme) -> Line<'static> {
     Line::from(Span::styled(
         format!("[x] {}  @{}", task.text, task.category),
-        dim_style(),
+        dim_style(theme),
     ))
 }
 
 /// Dimmed row for an archived task in the Tasks tab's Done/All views:
 /// completed marker, text, category/project, and the completion date.
-pub(super) fn archived_task_line(task: &Task) -> Line<'static> {
+pub(super) fn archived_task_line(task: &Task, theme: &Theme) -> Line<'static> {
     let mut text = format!("[x] {}  @{}", task.text, task.category);
     if let Some(project) = &task.project {
         text.push_str(&format!(" #{project}"));
@@ -257,24 +255,21 @@ pub(super) fn archived_task_line(task: &Task) -> Line<'static> {
     if let Some(completed) = task.completed_at {
         text.push_str(&format!("  done {}", completed.date_naive()));
     }
-    Line::from(Span::styled(text, dim_style()))
+    Line::from(Span::styled(text, dim_style(theme)))
 }
 
 // ---- footer, input box, confirm prompt ------------------------------------
 
 fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(msg) = &app.footer_msg {
-        let para = Paragraph::new(Line::from(Span::styled(
-            format!(" {msg}"),
-            Style::default().fg(Color::Red),
-        )));
+        let para = Paragraph::new(Line::from(Span::styled(format!(" {msg}"), app.theme.error)));
         frame.render_widget(para, area);
         return;
     }
 
     let para = Paragraph::new(Line::from(Span::styled(
         format!(" {}", footer_hints(app, area.width)),
-        Style::default().fg(Color::DarkGray),
+        app.theme.hint,
     )));
     frame.render_widget(para, area);
 }
@@ -296,6 +291,7 @@ fn footer_hints(app: &App, width: u16) -> String {
             VimMode::Normal => "enter save · esc cancel · i insert · ctrl+o editor".to_string(),
         },
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
+        Mode::ThemePicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
         Mode::ConfirmDelete => "delete? y / n".to_string(),
         Mode::Help => "any key to close".to_string(),
@@ -362,13 +358,13 @@ fn input_label(purpose: &EditPurpose) -> &'static str {
 
 /// The lightweight single-line input (filter and due date): a 1-row clipping
 /// box with a terminal cursor. Content edits use [`render_textedit`] instead.
-fn render_input(editing: &Editing, frame: &mut Frame, area: Rect) {
+fn render_input(editing: &Editing, theme: &Theme, frame: &mut Frame, area: Rect) {
     let rect = centered_rect(area, 60, 3);
     frame.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(input_label(&editing.purpose))
-        .border_style(header_style());
+        .border_style(header_style(theme));
     let inner_width = rect.width.saturating_sub(2);
 
     let para = Paragraph::new(Line::from(Span::raw(editing.buffer.clone()))).block(block);
@@ -393,26 +389,14 @@ fn render_textedit(app: &App, te: &TextEdit, frame: &mut Frame, area: Rect) {
     frame.render_widget(Clear, rect);
 
     let (mode_label, mode_style) = match te.vim {
-        VimMode::Insert => (
-            " INSERT ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        VimMode::Normal => (
-            " NORMAL ",
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
+        VimMode::Insert => (" INSERT ", app.theme.insert_mode),
+        VimMode::Normal => (" NORMAL ", app.theme.normal_mode),
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(input_label(&te.purpose))
         .title_bottom(Line::from(Span::styled(mode_label, mode_style)))
-        .border_style(header_style());
+        .border_style(header_style(&app.theme));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     frame.render_widget(te.textarea(), inner);
@@ -431,37 +415,61 @@ fn render_textedit(app: &App, te: &TextEdit, frame: &mut Frame, area: Rect) {
             let rest: String = chars.collect();
             let width = (suggestion.remainder.chars().count() as u16).min(inner.right() - x);
             let ghost = Line::from(vec![
-                Span::styled(first, dim_style().add_modifier(Modifier::REVERSED)),
-                Span::styled(rest, dim_style()),
+                Span::styled(
+                    first,
+                    dim_style(&app.theme).add_modifier(Modifier::REVERSED),
+                ),
+                Span::styled(rest, dim_style(&app.theme)),
             ]);
             frame.render_widget(Paragraph::new(ghost), Rect::new(x, y, width, 1));
         }
     }
 }
 
-fn render_category_picker(picker: &CategoryPicker, frame: &mut Frame, area: Rect) {
+fn render_category_picker(picker: &CategoryPicker, theme: &Theme, frame: &mut Frame, area: Rect) {
     let height = picker.options.len() as u16 + 2;
     let rect = centered_rect(area, 40, height);
     frame.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Category (j/k move · enter select · esc cancel)")
-        .border_style(header_style());
+        .border_style(header_style(theme));
     let lines: Vec<Line> = picker
         .options
         .iter()
         .enumerate()
         .map(|(i, opt)| {
             if i == picker.selected {
-                Line::from(Span::styled(
-                    format!("> {opt}"),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ))
+                Line::from(Span::styled(format!("> {opt}"), selection_style(theme)))
             } else {
                 Line::from(Span::raw(format!("  {opt}")))
+            }
+        })
+        .collect();
+    let para = Paragraph::new(lines).block(block);
+    frame.render_widget(para, rect);
+}
+
+/// The `ctrl+t` theme picker: a closed list of theme names, one per row, the
+/// selected one highlighted. Because moving the highlight live-previews the
+/// theme into `app.theme`, the modal itself recolors as you move — intended.
+fn render_theme_picker(picker: &ThemePicker, theme: &Theme, frame: &mut Frame, area: Rect) {
+    let height = picker.options.len() as u16 + 2;
+    let rect = centered_rect(area, 40, height.min(area.height));
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Theme (j/k move · enter select · esc cancel)")
+        .border_style(header_style(theme));
+    let lines: Vec<Line> = picker
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            if i == picker.selected {
+                Line::from(Span::styled(format!("> {name}"), selection_style(theme)))
+            } else {
+                Line::from(Span::raw(format!("  {name}")))
             }
         })
         .collect();
@@ -484,7 +492,7 @@ fn render_note_picker(app: &App, selected: usize, frame: &mut Frame, area: Rect)
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(header_style());
+        .border_style(header_style(&app.theme));
     let inner_width = rect.width.saturating_sub(2) as usize;
     let lines: Vec<Line> = app
         .notes_list
@@ -498,32 +506,29 @@ fn render_note_picker(app: &App, selected: usize, frame: &mut Frame, area: Rect)
             let line = if i == selected {
                 Line::from(Span::styled(
                     format!("> {}  ({count})", note.title),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    selection_style(&app.theme),
                 ))
             } else {
                 Line::from(vec![
                     Span::raw(format!("  {}", note.title)),
-                    Span::styled(format!("  ({count})"), dim_style()),
+                    Span::styled(format!("  ({count})"), dim_style(&app.theme)),
                 ])
             };
-            truncate_line(line, inner_width)
+            truncate_line(line, inner_width, &app.theme)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
 /// The `?` overlay: every keybind, grouped by the context it applies in.
-fn render_help(frame: &mut Frame, area: Rect) {
+fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
     let groups: [(&str, &[&str]); 6] = [
         (
             "Global",
             &[
                 "1/g today · 2/s standup · 3/t tasks · 4/n notes",
                 "N new note · ' switch note · tab/h/l pane focus · j/k move",
-                "? this help · q/esc quit",
+                "ctrl+t theme · ? this help · q/esc quit",
             ],
         ),
         (
@@ -567,7 +572,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         if i > 0 {
             lines.push(Line::default());
         }
-        lines.push(Line::from(Span::styled(*title, header_style())));
+        lines.push(Line::from(Span::styled(*title, header_style(theme))));
         for row in *rows {
             lines.push(Line::from(Span::raw(format!("  {row}"))));
         }
@@ -592,7 +597,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Keybinds (any key to close)")
-        .border_style(header_style());
+        .border_style(header_style(theme));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(ratatui::widgets::Wrap { trim: false })
@@ -601,13 +606,13 @@ fn render_help(frame: &mut Frame, area: Rect) {
     );
 }
 
-fn render_confirm(frame: &mut Frame, area: Rect) {
+fn render_confirm(theme: &Theme, frame: &mut Frame, area: Rect) {
     let rect = centered_rect(area, 40, 3);
     frame.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Confirm")
-        .border_style(Style::default().fg(Color::Red));
+        .border_style(theme.error);
     let para = Paragraph::new("Delete? (y/n)").block(block);
     frame.render_widget(para, rect);
 }

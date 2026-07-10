@@ -1,0 +1,23 @@
+# Gruvbox dark (medium contrast) for wl.
+#
+# https://github.com/morhetz/gruvbox — palette reference:
+#   bg0 #282828 · fg1 #ebdbb2 · gray #928374
+#   bright blue #83a598 · bright purple #d3869b · bright green #b8bb26
+#   bright yellow #fabd2f · bright red #fb4934
+#
+# Every slot is a compact style string: "<fg>? (on <bg>)? <modifier>*".
+# Drop any slot to fall back to wl's built-in default for it.
+
+accent: "#83a598 bold"
+selection: "#282828 on #83a598 bold"
+muted: "#928374"
+hint: "#928374"
+error: "#fb4934"
+category: "#b8bb26"
+project: "#d3869b"
+due: "#fabd2f"
+due_overdue: "#fb4934 bold"
+insert_mode: "#282828 on #83a598 bold"
+normal_mode: "#282828 on #fabd2f bold"
+md_code: "#fabd2f"
+md_link: "#83a598 underlined"

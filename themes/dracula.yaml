@@ -1,0 +1,23 @@
+# Dracula for wl.
+#
+# https://draculatheme.com — palette reference:
+#   background #282a36 · foreground #f8f8f2 · comment #6272a4
+#   cyan #8be9fd · green #50fa7b · orange #ffb86c · pink #ff79c6
+#   purple #bd93f9 · red #ff5555 · yellow #f1fa8c
+#
+# Every slot is a compact style string: "<fg>? (on <bg>)? <modifier>*".
+# Drop any slot to fall back to wl's built-in default for it.
+
+accent: "#8be9fd bold"
+selection: "#282a36 on #bd93f9 bold"
+muted: "#6272a4"
+hint: "#6272a4"
+error: "#ff5555"
+category: "#50fa7b"
+project: "#ff79c6"
+due: "#f1fa8c"
+due_overdue: "#ff5555 bold"
+insert_mode: "#282a36 on #8be9fd bold"
+normal_mode: "#282a36 on #f1fa8c bold"
+md_code: "#f1fa8c"
+md_link: "#8be9fd underlined"

@@ -42,17 +42,17 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
             .iter()
             .map(|t| {
                 let line = match t.status {
-                    Status::Done => archived_task_line(t),
-                    _ => task_line(t, app.today),
+                    Status::Done => archived_task_line(t, &app.theme),
+                    _ => task_line(t, app.today, &app.theme),
                 };
-                ListItem::new(truncate_line(line, row_width))
+                ListItem::new(truncate_line(line, row_width, &app.theme))
             })
             .collect()
     };
 
     let list = List::new(items)
-        .block(pane_block(title, focused))
-        .highlight_style(selection_style())
+        .block(pane_block(title, focused, &app.theme))
+        .highlight_style(selection_style(&app.theme))
         .highlight_symbol("> ");
 
     let mut state = ListState::default();

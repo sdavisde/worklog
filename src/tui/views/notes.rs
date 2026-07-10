@@ -4,13 +4,14 @@
 //! and is pre-wrapped to the pane width, since ratatui's `List` does neither.
 
 use crate::markdown::{Inline, parse_inline};
+use crate::theme::Theme;
 use crate::tui::app::{App, Focus, NoteRow, Tab};
 use crate::tui::views::{
     dim_style, header_style, pane_block, selection_style, truncate_line, truncate_str,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListItem, ListState};
 
@@ -32,16 +33,16 @@ pub fn render_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                 };
                 let line = Line::from(vec![
                     Span::raw(s.title.clone()),
-                    Span::styled(format!("  ({count})"), dim_style()),
+                    Span::styled(format!("  ({count})"), dim_style(&app.theme)),
                 ]);
-                ListItem::new(truncate_line(line, row_width))
+                ListItem::new(truncate_line(line, row_width, &app.theme))
             })
             .collect()
     };
 
     let list = List::new(items)
-        .block(pane_block("Notes", focused))
-        .highlight_style(selection_style())
+        .block(pane_block("Notes", focused, &app.theme))
+        .highlight_style(selection_style(&app.theme))
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
@@ -79,11 +80,15 @@ pub fn render_detail(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
         .into_iter()
         .map(|row| match row {
             NoteRow::Heading { heading, .. } => ListItem::new(truncate_line(
-                Line::from(Span::styled(format!("## {heading}"), header_style())),
+                Line::from(Span::styled(
+                    format!("## {heading}"),
+                    header_style(&app.theme),
+                )),
                 wrap_width,
+                &app.theme,
             )),
             NoteRow::Item { text, .. } => {
-                ListItem::new(Text::from(wrap_note_item(&text, wrap_width)))
+                ListItem::new(Text::from(wrap_note_item(&text, wrap_width, &app.theme)))
             }
         })
         .collect();
@@ -100,8 +105,8 @@ pub fn render_detail(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     }
 
     let list = List::new(rows)
-        .block(pane_block(title, focused))
-        .highlight_style(selection_style())
+        .block(pane_block(title, focused, &app.theme))
+        .highlight_style(selection_style(&app.theme))
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
@@ -111,19 +116,16 @@ pub fn render_detail(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// Style for one inline markdown run.
-fn inline_run(inline: Inline) -> (String, Style) {
+/// Style for one inline markdown run. Bold/italic stay plain modifiers (they
+/// layer over whatever color surrounds them); code and links pick up their
+/// theme slots.
+fn inline_run(inline: Inline, theme: &Theme) -> (String, Style) {
     match inline {
         Inline::Text(s) => (s, Style::default()),
         Inline::Bold(s) => (s, Style::default().add_modifier(Modifier::BOLD)),
         Inline::Italic(s) => (s, Style::default().add_modifier(Modifier::ITALIC)),
-        Inline::Code(s) => (s, Style::default().fg(Color::Yellow)),
-        Inline::Link { text, .. } => (
-            text,
-            Style::default()
-                .fg(Color::Blue)
-                .add_modifier(Modifier::UNDERLINED),
-        ),
+        Inline::Code(s) => (s, theme.md_code),
+        Inline::Link { text, .. } => (text, theme.md_link),
     }
 }
 
@@ -132,14 +134,21 @@ fn inline_run(inline: Inline) -> (String, Style) {
 /// indented four spaces so they align under the item text, not the dash.
 /// Breaks at the last space that fits, or mid-word when a single word
 /// overflows the line.
-pub(in crate::tui) fn wrap_note_item(text: &str, width: usize) -> Vec<Line<'static>> {
+pub(in crate::tui) fn wrap_note_item(
+    text: &str,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     const PREFIX: &str = "  - ";
     const INDENT: &str = "    ";
     let text_width = width.saturating_sub(PREFIX.len()).max(1);
 
     // Flatten the styled runs into one char stream tagged with its run index,
     // so wrapping can cut anywhere without losing style boundaries.
-    let runs: Vec<(String, Style)> = parse_inline(text).into_iter().map(inline_run).collect();
+    let runs: Vec<(String, Style)> = parse_inline(text)
+        .into_iter()
+        .map(|i| inline_run(i, theme))
+        .collect();
     let chars: Vec<(char, usize)> = runs
         .iter()
         .enumerate()
@@ -179,7 +188,7 @@ pub(in crate::tui) fn wrap_note_item(text: &str, width: usize) -> Vec<Line<'stat
         .enumerate()
         .map(|(li, (s, e))| {
             let lead = if li == 0 { PREFIX } else { INDENT };
-            let mut spans = vec![Span::styled(lead, dim_style())];
+            let mut spans = vec![Span::styled(lead, dim_style(theme))];
             let mut i = s;
             while i < e {
                 let run = chars[i].1;

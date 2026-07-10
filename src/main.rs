@@ -5,6 +5,7 @@ mod model;
 mod notes;
 mod standup;
 mod store;
+mod theme;
 mod tui;
 
 use clap::{Parser, Subcommand};

@@ -32,6 +32,9 @@ Relevant Files table for the authoritative list):
 - `src/markdown.rs` — minimal markdown block parser (importer/notes).
 - `src/standup.rs` — shared standup-report builder used by both `wl standup`
   and the TUI's Standup view.
+- `src/theme.rs` — TUI color theme: semantic style slots, the style-string
+  grammar, and lookup across the default theme, user files under
+  `<worklog-dir>/themes/`, and embedded presets (`themes/*.yaml`).
 - `src/commands/` — `task`, `standup`, `import_legacy` subcommand handlers.
 - `src/tui/` — ratatui views (Today/Standup/Tasks/Notes), event loop, `$EDITOR`
   escape hatch (`src/tui/app.rs` is the state machine; `src/tui/views/` is

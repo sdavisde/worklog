@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::model::{Status, Task};
 use crate::notes::NotesStore;
 use crate::store::Store;
+use crate::theme::Theme;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -23,7 +24,7 @@ use tempfile::TempDir;
 fn app_in(dir: &Path) -> App {
     let store = Store::new(dir);
     let notes = NotesStore::new(dir.join("notes"));
-    App::new(store, notes, Config::default()).unwrap()
+    App::new(store, notes, Config::default(), Theme::default()).unwrap()
 }
 
 fn today() -> NaiveDate {
@@ -1381,7 +1382,7 @@ fn flat(line: &ratatui::text::Line<'_>) -> String {
 
 #[test]
 fn wrap_note_item_breaks_at_spaces_and_indents_under_text() {
-    let lines = views::notes::wrap_note_item("alpha beta gamma delta", 14);
+    let lines = views::notes::wrap_note_item("alpha beta gamma delta", 14, &Theme::default());
     let rendered: Vec<String> = lines.iter().map(flat).collect();
     // width 14 minus the 4-col "  - " prefix leaves 10 text columns
     assert_eq!(rendered, vec!["  - alpha beta", "    gamma", "    delta"]);
@@ -1389,7 +1390,7 @@ fn wrap_note_item_breaks_at_spaces_and_indents_under_text() {
 
 #[test]
 fn wrap_note_item_hard_breaks_single_overlong_word() {
-    let lines = views::notes::wrap_note_item("abcdefghijkl", 8);
+    let lines = views::notes::wrap_note_item("abcdefghijkl", 8, &Theme::default());
     let rendered: Vec<String> = lines.iter().map(flat).collect();
     assert_eq!(rendered, vec!["  - abcd", "    efgh", "    ijkl"]);
 }
@@ -1397,7 +1398,11 @@ fn wrap_note_item_hard_breaks_single_overlong_word() {
 #[test]
 fn wrap_note_item_styles_inline_markdown() {
     use ratatui::style::{Color, Modifier};
-    let lines = views::notes::wrap_note_item("has **bold** and `code` [docs](https://x.dev)", 60);
+    let lines = views::notes::wrap_note_item(
+        "has **bold** and `code` [docs](https://x.dev)",
+        60,
+        &Theme::default(),
+    );
     assert_eq!(lines.len(), 1);
     let line = &lines[0];
     assert_eq!(flat(line), "  - has bold and code docs", "markers consumed");
@@ -1423,7 +1428,8 @@ fn wrap_note_item_styles_inline_markdown() {
 
 #[test]
 fn wrap_note_item_unclosed_markers_render_literally() {
-    let lines = views::notes::wrap_note_item("start **unclosed and `dangling", 60);
+    let lines =
+        views::notes::wrap_note_item("start **unclosed and `dangling", 60, &Theme::default());
     assert_eq!(flat(&lines[0]), "  - start **unclosed and `dangling");
 }
 
@@ -1532,6 +1538,43 @@ fn overlong_task_rows_truncate_with_ellipsis() {
         !out.contains("@engineering"),
         "clipped tail (category) is gone rather than wrapped"
     );
+}
+
+#[test]
+fn custom_theme_changes_rendered_category_color() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("themed task", "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    assert_eq!(app.theme, Theme::default());
+    let default_fg = category_marker_fg(&app);
+
+    let custom_fg = ratatui::style::Color::Rgb(0x12, 0x34, 0x56);
+    app.theme.category = ratatui::style::Style::default().fg(custom_fg);
+    let themed_fg = category_marker_fg(&app);
+
+    assert_ne!(
+        default_fg, themed_fg,
+        "a custom theme's category slot must change the rendered color"
+    );
+    assert_eq!(themed_fg, Some(custom_fg));
+}
+
+/// Foreground color of the `@` marker in the rendered Today view — the first
+/// character of the `@category` span, styled via `theme.category`.
+fn category_marker_fg(app: &App) -> Option<ratatui::style::Color> {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal.draw(|frame| views::draw(app, frame)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .find(|cell| cell.symbol() == "@")
+        .map(|cell| cell.fg)
 }
 
 #[test]
@@ -1770,4 +1813,79 @@ fn ctrl_o_roundtrips_modal_buffer_through_editor() {
     let saved = Store::new(dir.path()).load_tasks().unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].text, "line one line two");
+}
+
+// ---- theme picker ---------------------------------------------------------
+
+#[test]
+fn ctrl_t_opens_theme_picker() {
+    let dir = TempDir::new().unwrap();
+    let mut app = app_in(dir.path());
+    press_ctrl(&mut app, 't');
+    match &app.mode {
+        Mode::ThemePicker(picker) => {
+            // "default" is always first and pre-selected.
+            assert_eq!(picker.options.first().map(String::as_str), Some("default"));
+            assert_eq!(picker.original, "default");
+            assert_eq!(picker.selected, 0);
+        }
+        other => panic!("ctrl+t must open the theme picker, got {other:?}"),
+    }
+}
+
+#[test]
+fn theme_picker_enter_applies_and_persists() {
+    let dir = TempDir::new().unwrap();
+    // Materialize config.yaml so persistence has a file to rewrite.
+    let cfg_path = Store::new(dir.path()).config_path();
+    crate::config::load_or_create(&cfg_path).unwrap();
+
+    let mut app = app_in(dir.path());
+    let default_theme = app.theme.clone();
+
+    press_ctrl(&mut app, 't');
+    // Move off "default" onto the first built-in preset, then apply.
+    press(&mut app, KeyCode::Char('j'));
+    let chosen = match &app.mode {
+        Mode::ThemePicker(p) => p.options[p.selected].clone(),
+        other => panic!("expected theme picker, got {other:?}"),
+    };
+    assert_ne!(chosen, "default");
+    press(&mut app, KeyCode::Enter);
+
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(app.config.theme, chosen);
+    assert_ne!(app.theme, default_theme, "live theme changed");
+
+    // The config file on disk now reads back the new theme.
+    let reloaded = crate::config::load_or_create(&cfg_path).unwrap();
+    assert_eq!(reloaded.theme, chosen);
+}
+
+#[test]
+fn theme_picker_esc_reverts_and_leaves_config_unchanged() {
+    let dir = TempDir::new().unwrap();
+    let cfg_path = Store::new(dir.path()).config_path();
+    crate::config::load_or_create(&cfg_path).unwrap();
+    let before = std::fs::read_to_string(&cfg_path).unwrap();
+
+    let mut app = app_in(dir.path());
+    let default_theme = app.theme.clone();
+
+    press_ctrl(&mut app, 't');
+    press(&mut app, KeyCode::Char('j')); // preview a non-default theme
+    assert_ne!(app.theme, default_theme, "preview changed the live theme");
+    press(&mut app, KeyCode::Esc);
+
+    assert!(matches!(app.mode, Mode::Normal));
+    assert_eq!(
+        app.theme, default_theme,
+        "esc reverts to the original theme"
+    );
+    assert_eq!(app.config.theme, "default", "config value untouched");
+    assert_eq!(
+        std::fs::read_to_string(&cfg_path).unwrap(),
+        before,
+        "esc must not write config.yaml"
+    );
 }

@@ -29,13 +29,19 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     } else {
         active
             .iter()
-            .map(|t| ListItem::new(truncate_line(task_line(t, app.today), row_width)))
+            .map(|t| {
+                ListItem::new(truncate_line(
+                    task_line(t, app.today, &app.theme),
+                    row_width,
+                    &app.theme,
+                ))
+            })
             .collect()
     };
 
     let list = List::new(items)
-        .block(pane_block("Today", focused))
-        .highlight_style(selection_style())
+        .block(pane_block("Today", focused, &app.theme))
+        .highlight_style(selection_style(&app.theme))
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
@@ -45,11 +51,14 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     frame.render_stateful_widget(list, top, &mut state);
 
     if !completions.is_empty() {
-        let mut lines = vec![Line::from(Span::styled("Completed today", header_style()))];
+        let mut lines = vec![Line::from(Span::styled(
+            "Completed today",
+            header_style(&app.theme),
+        ))];
         lines.extend(
             completions
                 .iter()
-                .map(|t| truncate_line(completed_line(t), inner)),
+                .map(|t| truncate_line(completed_line(t, &app.theme), inner, &app.theme)),
         );
         frame.render_widget(Paragraph::new(lines), bottom);
     }

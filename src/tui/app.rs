@@ -12,11 +12,12 @@ use crate::model::{Status, Task};
 use crate::notes::{Body, Line, NoteDoc, NotesStore};
 use crate::standup::{StandupReport, build_report};
 use crate::store::Store;
+use crate::theme::{self, Theme};
 use crate::tui::editor;
 use crate::tui::textedit::{Outcome, TextEdit, VimMode};
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::Result;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::path::PathBuf;
 
 /// The four top-level tabs shown in the tab bar.
@@ -108,6 +109,19 @@ pub struct CategoryPicker {
     pub selected: usize,
 }
 
+/// `ctrl+t` theme picker: `j`/`k` move the highlight and live-preview that
+/// theme, `enter` applies + persists it, `esc` reverts to the theme active
+/// when the picker opened. `themes` is index-aligned with `options`.
+#[derive(Debug, Clone)]
+pub struct ThemePicker {
+    pub options: Vec<String>,
+    pub selected: usize,
+    /// `config.theme` at open time, for revert-on-cancel.
+    pub original: String,
+    /// Pre-loaded themes, index-aligned with `options`.
+    pub themes: Vec<Theme>,
+}
+
 /// A single-line input buffer with a char-index cursor.
 #[derive(Debug, Clone)]
 pub struct Editing {
@@ -171,6 +185,8 @@ pub enum Mode {
     Editing(Editing),
     TextEdit(Box<TextEdit>),
     CategoryPicker(CategoryPicker),
+    /// `ctrl+t`: pick + live-preview the color theme.
+    ThemePicker(ThemePicker),
     /// `'`: jump the side pane to any note; the highlighted index points
     /// into `notes_list`.
     NotePicker {
@@ -237,6 +253,7 @@ pub struct App {
     pub store: Store,
     pub notes: NotesStore,
     pub config: Config,
+    pub theme: Theme,
 
     pub tab: Tab,
     pub focus: Focus,
@@ -269,13 +286,15 @@ pub struct App {
 }
 
 impl App {
-    /// Build an app over already-resolved stores/config, loading initial data.
-    pub fn new(store: Store, notes: NotesStore, config: Config) -> Result<Self> {
+    /// Build an app over already-resolved stores/config/theme, loading
+    /// initial data.
+    pub fn new(store: Store, notes: NotesStore, config: Config, theme: Theme) -> Result<Self> {
         let standup = build_report(&store)?;
         let mut app = App {
             store,
             notes,
             config,
+            theme,
             tab: Tab::Today,
             focus: Focus::Main,
             mode: Mode::Normal,
@@ -647,6 +666,7 @@ impl App {
             Mode::Editing(_) => self.handle_editing_key(key)?,
             Mode::TextEdit(_) => self.handle_textedit_key(key)?,
             Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
+            Mode::ThemePicker(_) => self.handle_theme_picker_key(key)?,
             Mode::NotePicker { .. } => self.handle_note_picker_key(key)?,
             Mode::ConfirmDelete => self.handle_confirm_key(key)?,
             // any key dismisses the keybinds overlay
@@ -657,6 +677,11 @@ impl App {
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) -> Result<()> {
+        // Global chord: open the theme picker from anywhere in normal mode.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
+            self.open_theme_picker();
+            return Ok(());
+        }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
@@ -1323,6 +1348,71 @@ impl App {
                 }
             }
             KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Open the `ctrl+t` theme picker: load every selectable theme, dropping
+    /// any whose file fails to load so a broken theme can't break the picker,
+    /// and pre-highlight the currently configured theme.
+    fn open_theme_picker(&mut self) {
+        let mut options = Vec::new();
+        let mut themes = Vec::new();
+        for name in theme::available(&self.store) {
+            if let Ok(theme) = theme::load(&self.store, &name) {
+                options.push(name);
+                themes.push(theme);
+            }
+        }
+        if options.is_empty() {
+            // "default" always loads, so this is unreachable; guard anyway.
+            return;
+        }
+        let selected = options
+            .iter()
+            .position(|n| n == &self.config.theme)
+            .unwrap_or(0);
+        self.mode = Mode::ThemePicker(ThemePicker {
+            options,
+            selected,
+            original: self.config.theme.clone(),
+            themes,
+        });
+    }
+
+    /// The `ctrl+t` theme picker: `j`/`k` move and live-preview, `enter`
+    /// applies + persists, `esc` reverts to the theme active on open.
+    fn handle_theme_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Mode::ThemePicker(picker) = &mut self.mode else {
+            return Ok(());
+        };
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if picker.selected + 1 < picker.options.len() {
+                    picker.selected += 1;
+                }
+                self.theme = picker.themes[picker.selected].clone();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                picker.selected = picker.selected.saturating_sub(1);
+                self.theme = picker.themes[picker.selected].clone();
+            }
+            KeyCode::Enter => {
+                let name = picker.options[picker.selected].clone();
+                let theme = picker.themes[picker.selected].clone();
+                self.mode = Mode::Normal;
+                self.theme = theme;
+                self.config.theme = name.clone();
+                if let Err(e) = crate::config::set_theme(&self.store.config_path(), &name) {
+                    self.footer_msg = Some(format!("theme applied but not saved: {e}"));
+                }
+            }
+            KeyCode::Esc => {
+                let original = picker.original.clone();
+                self.theme = theme::load(&self.store, &original).unwrap_or_default();
+                self.mode = Mode::Normal;
+            }
             _ => {}
         }
         Ok(())

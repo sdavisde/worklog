@@ -99,6 +99,7 @@ top-level view (not while inside a Notes document or an input box).
 | `n` | go to Notes view | any top-level view |
 | `j` / `↓` | move selection down | any view with a list |
 | `k` / `↑` | move selection up | any view with a list |
+| `ctrl+t` | open the in-app theme picker (previews live, persists on `enter`) | any view |
 | `q` / `esc` | quit | Today, Standup, Tasks, Notes list |
 | `q` / `esc` | back to Notes list | Notes document view |
 
@@ -154,16 +155,81 @@ out of the raw text as you commit it:
 Example: `fix login @engineering #auth` → text `fix login`, category
 `engineering`, project `auth`.
 
+## Themes
+
+The TUI's colors are themeable. The default theme is built purely from named
+ANSI colors, so out of the box `wl` inherits your terminal's own palette and
+needs no configuration. Select a different theme with the `theme` key in
+`config.yaml`:
+
+```yaml
+theme: catppuccin-mocha
+```
+
+Three presets ship built in — `catppuccin-mocha`, `gruvbox-dark`, and
+`dracula` — and need no extra files. Anything else is loaded from
+`~/.worklog/themes/<name>.yaml`; a `theme:` that resolves to neither a preset
+nor a file is a startup error listing the names it does know.
+
+You don't have to edit `config.yaml` by hand: pressing `Ctrl+T` anywhere in
+the TUI opens an in-app theme picker that previews each theme as you move
+through the list and, on `enter`, persists your choice to the `theme:` key in
+`config.yaml` (comments and other settings are left untouched).
+
+### Writing a theme
+
+A theme sets any of 13 semantic **slots**. Each slot is one compact style
+string — `<fg-color>? (on <bg-color>)? <modifier>*`:
+
+- **Colors** may be named (`cyan`, `darkgray`), hex (`#89b4fa`), or an indexed
+  terminal color (`0`–`255`).
+- **Modifiers** are `bold`, `dim`, `italic`, `underlined`, `reversed`, and
+  `crossedout`.
+- Examples: `cyan bold`, `black on yellow bold`, `#f38ba8`, `reversed`.
+
+Theme files are **sparse**: any slot you omit keeps the default theme's value,
+so a two-line file that only recolors the accent is perfectly valid:
+
+```yaml
+# ~/.worklog/themes/my-theme.yaml
+accent: "#fab387 bold"
+```
+
+A user file wins over a built-in preset of the same name (so you can override
+a preset by dropping a file with its name into `themes/`). A misspelled slot
+name is rejected rather than silently ignored.
+
+| Slot | Used for |
+|---|---|
+| `accent` | active tab, focused pane border, help headings, input/modal borders |
+| `selection` | the highlighted list row and picker selection |
+| `muted` | inactive tabs, completed/archived rows, secondary text |
+| `hint` | the footer keybind hint line |
+| `error` | footer error messages, delete-confirm border |
+| `category` | `@category` tags |
+| `project` | `#project` tags |
+| `due` | due dates |
+| `due_overdue` | due dates in the past |
+| `insert_mode` | the `INSERT` badge in the edit modal |
+| `normal_mode` | the `NORMAL` badge in the edit modal |
+| `md_code` | inline `` `code` `` in notes |
+| `md_link` | inline `[links]` in notes |
+
+The three bundled presets ([`themes/*.yaml`](./themes) in this repo) are full
+13-slot examples to copy from.
+
 ## Data model
 
 ```
 ~/.worklog/
-  config.yaml          # categories, editor_command fallback
+  config.yaml          # categories, editor_command fallback, theme
   tasks.jsonl          # active + blocked tasks (rewritten atomically on change)
   archive.jsonl        # completed tasks, append-only — the permanent record
   notes/
     long-term-goals.md # one markdown doc per note, YAML frontmatter
     auth-revamp.md      # project-scoped when frontmatter has `project:`
+  themes/               # optional user theme files (see Themes below)
+    my-theme.yaml       # one YAML file per custom theme, selected by name
   legacy/               # daily_notes/, renamed here by `wl import-legacy`
 ```
 

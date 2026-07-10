@@ -13,6 +13,7 @@ mod tests;
 use crate::config;
 use crate::notes::NotesStore;
 use crate::store::Store;
+use crate::theme;
 use app::App;
 use color_eyre::eyre::Result;
 use ratatui::DefaultTerminal;
@@ -28,8 +29,10 @@ use ratatui::crossterm::{execute, terminal};
 pub fn run() -> Result<()> {
     let store = Store::resolve()?;
     let config = config::load_or_create(&store.config_path())?;
+    // A bad theme name is a clean startup error, never a mid-session panic.
+    let theme = theme::load(&store, &config.theme)?;
     let notes = NotesStore::new(store.notes_dir());
-    let mut app = App::new(store, notes, config)?;
+    let mut app = App::new(store, notes, config, theme)?;
 
     let mut terminal = ratatui::init();
     let result = run_loop(&mut terminal, &mut app);
