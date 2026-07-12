@@ -57,6 +57,69 @@ impl TaskView {
     }
 }
 
+/// Sort order for the Tasks tab, cycled with `S`. `File` keeps the existing
+/// order (active tasks as stored, archived most-recent-first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskSort {
+    #[default]
+    File,
+    /// Soonest due date first; tasks without one last.
+    Due,
+    /// Oldest `created_at` first.
+    Age,
+    /// Configured category order.
+    Category,
+}
+
+impl TaskSort {
+    fn next(self) -> Self {
+        match self {
+            TaskSort::File => TaskSort::Due,
+            TaskSort::Due => TaskSort::Age,
+            TaskSort::Age => TaskSort::Category,
+            TaskSort::Category => TaskSort::File,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TaskSort::File => "file",
+            TaskSort::Due => "due",
+            TaskSort::Age => "age",
+            TaskSort::Category => "cat",
+        }
+    }
+}
+
+/// Grouping for the Tasks tab, cycled with `G`. When on, `tasks_filtered`
+/// keeps rows group-contiguous and the view inserts a header row at each
+/// [`App::group_label`] transition; the sort applies within groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskGroup {
+    #[default]
+    Off,
+    Project,
+    Category,
+}
+
+impl TaskGroup {
+    fn next(self) -> Self {
+        match self {
+            TaskGroup::Off => TaskGroup::Project,
+            TaskGroup::Project => TaskGroup::Category,
+            TaskGroup::Category => TaskGroup::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TaskGroup::Off => "off",
+            TaskGroup::Project => "proj",
+            TaskGroup::Category => "cat",
+        }
+    }
+}
+
 /// Which pane owns keyboard input: the tab content or the notes side pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -72,6 +135,11 @@ pub enum EditPurpose {
         id: String,
     },
     DueDate {
+        id: String,
+    },
+    /// The project picker's "new project…" row: name a project not yet seen
+    /// on any active task and assign the task to it.
+    SetProject {
         id: String,
     },
     Filter,
@@ -106,6 +174,17 @@ pub enum EditPurpose {
 pub struct CategoryPicker {
     pub id: String,
     pub options: Vec<String>,
+    pub selected: usize,
+}
+
+/// `P`: picker for the selected task's project. Row 0 clears the project,
+/// rows 1..=n are the projects of `projects`, and the final row opens the
+/// text-edit modal to name a brand-new project. Same keys as the category
+/// picker: `j`/`k` move, `enter` applies, `esc` cancels.
+#[derive(Debug, Clone)]
+pub struct ProjectPicker {
+    pub id: String,
+    pub projects: Vec<String>,
     pub selected: usize,
 }
 
@@ -156,6 +235,8 @@ pub enum Mode {
     Normal,
     TextEdit(Box<TextEdit>),
     CategoryPicker(CategoryPicker),
+    /// `P`: pick (or clear, or newly name) the selected task's project.
+    ProjectPicker(ProjectPicker),
     /// `ctrl+t`: pick + live-preview the color theme.
     ThemePicker(ThemePicker),
     /// `'`: jump the side pane to any note; the highlighted index points
@@ -232,6 +313,8 @@ pub struct App {
     pub focus: Focus,
     pub mode: Mode,
     pub task_view: TaskView,
+    pub task_sort: TaskSort,
+    pub task_group: TaskGroup,
 
     pub tasks: Vec<Task>,
     pub archive: Vec<Task>,
@@ -272,6 +355,8 @@ impl App {
             focus: Focus::Main,
             mode: Mode::Normal,
             task_view: TaskView::default(),
+            task_sort: TaskSort::default(),
+            task_group: TaskGroup::default(),
             tasks: Vec::new(),
             archive: Vec::new(),
             standup,
@@ -430,7 +515,11 @@ impl App {
 
     /// Tasks for the Tasks tab: the `v` status view picks the population
     /// (open work, the archive, or both — archived most-recent-first),
-    /// narrowed by the current text/category/project filters.
+    /// narrowed by the current text/category/project filters, then reordered
+    /// by the `S` sort and the `G` grouping. Both reorders are stable, so
+    /// grouping keeps the sort order within each group, and the grouped list
+    /// is group-contiguous — the view derives its header rows from
+    /// [`App::group_label`] transitions.
     pub fn tasks_filtered(&self) -> Vec<Task> {
         let cat = self
             .cat_filter
@@ -456,7 +545,7 @@ impl App {
         };
 
         let mut out: Vec<Task> = match self.task_view {
-            TaskView::Done => return done(),
+            TaskView::Done => done(),
             TaskView::Open | TaskView::All => {
                 self.tasks.iter().filter(|t| matches(t)).cloned().collect()
             }
@@ -464,7 +553,46 @@ impl App {
         if self.task_view == TaskView::All {
             out.extend(done());
         }
+        match self.task_sort {
+            TaskSort::File => {}
+            TaskSort::Due => out.sort_by_key(|t| (t.due.is_none(), t.due)),
+            TaskSort::Age => out.sort_by_key(|t| t.created_at),
+            TaskSort::Category => {
+                out.sort_by_key(|t| (self.category_rank(&t.category), t.category.clone()))
+            }
+        }
+        match self.task_group {
+            TaskGroup::Off => {}
+            TaskGroup::Project => out.sort_by_key(|t| (t.project.is_none(), t.project.clone())),
+            TaskGroup::Category => {
+                out.sort_by_key(|t| (self.category_rank(&t.category), t.category.clone()))
+            }
+        }
         out
+    }
+
+    /// Position of `cat` in the configured category order; unknown categories
+    /// (e.g. from records predating a config edit) sort last, then by name via
+    /// the callers' tuple keys.
+    fn category_rank(&self, cat: &str) -> usize {
+        self.config
+            .categories
+            .iter()
+            .position(|c| c == cat)
+            .unwrap_or(usize::MAX)
+    }
+
+    /// Header the `G` grouping puts above `task`'s group in the Tasks view;
+    /// `None` when grouping is off.
+    pub fn group_label(&self, task: &Task) -> Option<String> {
+        match self.task_group {
+            TaskGroup::Off => None,
+            TaskGroup::Project => Some(match &task.project {
+                Some(p) => format!("#{p}"),
+                None => "(no project)".to_string(),
+            }),
+            TaskGroup::Category => Some(format!("@{}", task.category)),
+        }
     }
 
     pub fn category_filter_label(&self) -> String {
@@ -633,6 +761,7 @@ impl App {
         match self.mode {
             Mode::TextEdit(_) => self.handle_textedit_key(key)?,
             Mode::CategoryPicker(_) => self.handle_category_picker_key(key)?,
+            Mode::ProjectPicker(_) => self.handle_project_picker_key(key)?,
             Mode::ThemePicker(_) => self.handle_theme_picker_key(key)?,
             Mode::NotePicker { .. } => self.handle_note_picker_key(key)?,
             Mode::Confirm(_) => self.handle_confirm_key(key)?,
@@ -769,6 +898,23 @@ impl App {
                     });
                 }
             }
+            KeyCode::Char('P') => {
+                if let Some(sel) = self.selected_active_task() {
+                    let projects = self.distinct_projects();
+                    // pre-highlight the current project; "(no project)" (row
+                    // 0) when unset
+                    let selected = sel
+                        .project
+                        .as_ref()
+                        .and_then(|p| projects.iter().position(|x| x == p))
+                        .map_or(0, |i| i + 1);
+                    self.mode = Mode::ProjectPicker(ProjectPicker {
+                        id: sel.id.clone(),
+                        projects,
+                        selected,
+                    });
+                }
+            }
             KeyCode::Char('D') => {
                 if let Some(sel) = self.selected_active_task() {
                     let prefill = sel.due.map(|d| d.to_string()).unwrap_or_default();
@@ -799,6 +945,15 @@ impl App {
             }
             KeyCode::Char('c') if self.tab == Tab::Tasks => self.cycle_category(),
             KeyCode::Char('p') if self.tab == Tab::Tasks => self.cycle_project(),
+            // `s`/`g` are global tab switches, so sort/group take the capitals
+            KeyCode::Char('S') if self.tab == Tab::Tasks => {
+                self.task_sort = self.task_sort.next();
+                self.tasks_sel = 0;
+            }
+            KeyCode::Char('G') if self.tab == Tab::Tasks => {
+                self.task_group = self.task_group.next();
+                self.tasks_sel = 0;
+            }
             _ => {}
         }
         Ok(())
@@ -1189,6 +1344,15 @@ impl App {
                 self.commit_due(&id, &text)?;
                 self.mode = Mode::Normal;
             }
+            EditPurpose::SetProject { id } => {
+                // a pasted `#project` token is forgiven; row 0 of the picker
+                // is the way to clear, so empty input stays a no-op
+                let name = text.trim_start_matches('#').trim().to_string();
+                if !name.is_empty() {
+                    self.set_task_project(&id, Some(name))?;
+                }
+                self.mode = Mode::Normal;
+            }
             EditPurpose::Filter => {
                 self.filter_text = raw;
                 self.tasks_sel = 0;
@@ -1344,6 +1508,56 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The `P` project picker: row 0 clears, the middle rows apply an
+    /// existing project, and the final "new project…" row hands off to the
+    /// text-edit modal ([`EditPurpose::SetProject`]) to name a fresh one.
+    fn handle_project_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Mode::ProjectPicker(picker) = &mut self.mode else {
+            return Ok(());
+        };
+        // rows: 0 = "(no project)", 1..=n = projects, last = "new project…"
+        let last = picker.projects.len() + 1;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if picker.selected < last {
+                    picker.selected += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                picker.selected = picker.selected.saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                let id = picker.id.clone();
+                let sel = picker.selected;
+                if sel == last {
+                    self.mode = Mode::TextEdit(Box::new(TextEdit::new(
+                        EditPurpose::SetProject { id },
+                        String::new(),
+                    )));
+                } else {
+                    let project = (sel > 0).then(|| picker.projects[sel - 1].clone());
+                    self.mode = Mode::Normal;
+                    self.set_task_project(&id, project)?;
+                }
+            }
+            KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Persist a project change (or clear) for one task, via the same
+    /// rewrite-tasks.jsonl path category changes use.
+    fn set_task_project(&mut self, id: &str, project: Option<String>) -> Result<()> {
+        for t in self.tasks.iter_mut() {
+            if t.id == id {
+                t.project = project.clone();
+            }
+        }
+        self.store.save_tasks(&self.tasks)?;
+        self.reload()
     }
 
     /// Open the `ctrl+t` theme picker: load every selectable theme, dropping

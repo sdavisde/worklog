@@ -4,7 +4,8 @@
 //! `tempfile` temp dirs; nothing touches a real `~/.worklog`.
 
 use super::app::{
-    App, ConfirmAction, ConfirmState, EditPurpose, EditorRequest, Focus, Mode, Tab, TaskView,
+    App, ConfirmAction, ConfirmState, EditPurpose, EditorRequest, Focus, Mode, Tab, TaskGroup,
+    TaskSort, TaskView,
 };
 use super::editor;
 use super::views;
@@ -259,7 +260,7 @@ fn archived_tasks_are_read_only() {
     app.tab = Tab::Tasks;
     press(&mut app, KeyCode::Char('v')); // Done view, archived task selected
 
-    for mutation in ['b', 'x', 'e', 'd', 'C', 'D'] {
+    for mutation in ['b', 'x', 'e', 'd', 'C', 'D', 'P'] {
         press(&mut app, KeyCode::Char(mutation));
         assert!(
             matches!(app.mode, Mode::Normal),
@@ -678,6 +679,244 @@ fn category_picker_esc_cancels_without_changing_category() {
         "category unchanged on cancel"
     );
     assert!(matches!(app.mode, Mode::Normal));
+}
+
+// ---- project picker (`P`), sort (`S`), grouping (`G`), age -----------------
+
+#[test]
+fn project_picker_assigns_and_clears_project() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[
+            Task::new("move me", "engineering", None, None),
+            Task::new("anchor", "engineering", Some("auth".to_string()), None),
+        ])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    // assign: opens on "(no project)" for a project-less task
+    press(&mut app, KeyCode::Char('P'));
+    match &app.mode {
+        Mode::ProjectPicker(p) => {
+            assert_eq!(p.selected, 0, "no project → row 0 preselected");
+            assert_eq!(p.projects, vec!["auth".to_string()]);
+        }
+        other => panic!("expected ProjectPicker, got {other:?}"),
+    }
+    press(&mut app, KeyCode::Char('j')); // → #auth
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(app.mode, Mode::Normal));
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    let moved = saved.iter().find(|t| t.text == "move me").unwrap();
+    assert_eq!(moved.project.as_deref(), Some("auth"));
+
+    // esc cancels without changing anything
+    press(&mut app, KeyCode::Char('P'));
+    press(&mut app, KeyCode::Char('k'));
+    press(&mut app, KeyCode::Esc);
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    let moved = saved.iter().find(|t| t.text == "move me").unwrap();
+    assert_eq!(moved.project.as_deref(), Some("auth"), "unchanged on esc");
+
+    // clear: reopens preselecting the current project, k moves to row 0
+    press(&mut app, KeyCode::Char('P'));
+    match &app.mode {
+        Mode::ProjectPicker(p) => assert_eq!(p.selected, 1, "current project preselected"),
+        other => panic!("expected ProjectPicker, got {other:?}"),
+    }
+    press(&mut app, KeyCode::Char('k'));
+    press(&mut app, KeyCode::Enter);
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    let moved = saved.iter().find(|t| t.text == "move me").unwrap();
+    assert_eq!(moved.project, None, "row 0 clears the project");
+}
+
+#[test]
+fn project_picker_new_project_via_text_modal() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[Task::new("fresh start", "engineering", None, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+
+    // no known projects: rows are "(no project)" and "new project…"
+    press(&mut app, KeyCode::Char('P'));
+    let out = render(&app);
+    assert!(out.contains("(no project)"), "clear row rendered");
+    assert!(out.contains("new project…"), "new-project row rendered");
+
+    press(&mut app, KeyCode::Char('j')); // → new project…
+    press(&mut app, KeyCode::Enter);
+    assert!(
+        matches!(
+            &app.mode,
+            Mode::TextEdit(te) if matches!(te.purpose, EditPurpose::SetProject { .. })
+        ),
+        "new-project row opens the text modal"
+    );
+    // a pasted `#growth` token is forgiven
+    type_str(&mut app, "#growth");
+    press(&mut app, KeyCode::Enter);
+
+    assert!(matches!(app.mode, Mode::Normal));
+    let saved = Store::new(dir.path()).load_tasks().unwrap();
+    assert_eq!(saved[0].project.as_deref(), Some("growth"));
+}
+
+#[test]
+fn task_rows_show_relative_age() {
+    assert_eq!(views::format_age(0), "0d");
+    assert_eq!(views::format_age(6), "6d");
+    assert_eq!(views::format_age(7), "1w");
+    assert_eq!(views::format_age(29), "4w");
+    assert_eq!(views::format_age(30), "1mo");
+    assert_eq!(views::format_age(364), "12mo");
+    assert_eq!(views::format_age(365), "1y");
+    assert_eq!(views::format_age(-1), "0d", "clock skew clamps to 0d");
+
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let mut aged = task("aging task", "engineering", Status::Open, None);
+    aged.created_at = (Local::now() - Duration::days(10)).fixed_offset();
+    store.save_tasks(&[aged]).unwrap();
+
+    let app = app_in(dir.path());
+    let out = render(&app);
+    assert!(out.contains("aging task"));
+    assert!(out.contains("1w"), "10-day-old task shows 1w: {out}");
+}
+
+#[test]
+fn capital_s_cycles_sort_modes_and_reorders() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let mut alpha = task(
+        "alpha",
+        "support",
+        Status::Open,
+        Some(today() + Duration::days(9)),
+    );
+    alpha.created_at = (Local::now() - Duration::days(1)).fixed_offset();
+    let mut bravo = task(
+        "bravo",
+        "engineering",
+        Status::Open,
+        Some(today() + Duration::days(1)),
+    );
+    bravo.created_at = (Local::now() - Duration::days(10)).fixed_offset();
+    let mut charlie = task("charlie", "priority", Status::Open, None);
+    charlie.created_at = (Local::now() - Duration::days(5)).fixed_offset();
+    store.save_tasks(&[alpha, bravo, charlie]).unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+    let texts = |app: &App| -> Vec<String> {
+        app.tasks_filtered()
+            .iter()
+            .map(|t| t.text.clone())
+            .collect()
+    };
+    assert_eq!(texts(&app), ["alpha", "bravo", "charlie"], "file order");
+
+    press(&mut app, KeyCode::Char('j')); // move selection off 0
+    press(&mut app, KeyCode::Char('S'));
+    assert_eq!(app.task_sort, TaskSort::Due);
+    assert_eq!(app.tasks_sel, 0, "selection resets on re-sort");
+    assert_eq!(
+        texts(&app),
+        ["bravo", "alpha", "charlie"],
+        "due soonest first, no-due last"
+    );
+    let out = render(&app);
+    assert!(out.contains("sort:due"), "title shows the sort");
+    assert!(out.contains("S sort[due]"), "footer shows the sort");
+
+    press(&mut app, KeyCode::Char('S'));
+    assert_eq!(app.task_sort, TaskSort::Age);
+    assert_eq!(texts(&app), ["bravo", "charlie", "alpha"], "oldest first");
+
+    press(&mut app, KeyCode::Char('S'));
+    assert_eq!(app.task_sort, TaskSort::Category);
+    assert_eq!(
+        texts(&app),
+        ["charlie", "alpha", "bravo"],
+        "configured category order (priority, support, …, engineering)"
+    );
+
+    press(&mut app, KeyCode::Char('S'));
+    assert_eq!(app.task_sort, TaskSort::File, "cycle wraps");
+}
+
+#[test]
+fn capital_g_groups_with_headers_and_selection_skips_them() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[
+            Task::new("one", "engineering", Some("auth".to_string()), None),
+            Task::new("two", "engineering", None, None),
+            Task::new("three", "engineering", Some("auth".to_string()), None),
+        ])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+    press(&mut app, KeyCode::Char('G'));
+    assert_eq!(app.task_group, TaskGroup::Project);
+
+    let texts: Vec<String> = app
+        .tasks_filtered()
+        .iter()
+        .map(|t| t.text.clone())
+        .collect();
+    assert_eq!(
+        texts,
+        ["one", "three", "two"],
+        "group-contiguous, no-project group last"
+    );
+
+    let out = render(&app);
+    assert!(out.contains("grp:proj"), "title shows the grouping");
+    assert!(out.contains("(no project)"), "no-project header rendered");
+    let pos = |needle: &str| {
+        out.find(needle)
+            .unwrap_or_else(|| panic!("{needle} missing"))
+    };
+    assert!(
+        pos("three") < pos("(no project)") && pos("(no project)") < pos("two"),
+        "header row sits between the groups"
+    );
+    // the highlight lands on the selected task, not the header above it
+    let sel_line = out
+        .lines()
+        .find(|l| l.contains("> "))
+        .expect("highlight rendered");
+    assert!(
+        sel_line.contains("one"),
+        "highlight on the first task, not the header: {sel_line}"
+    );
+
+    // selection walks tasks only: two j's from "one" land on "two" (headers
+    // are render-time rows, never selectable)
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char(' '));
+    let archived = Store::new(dir.path()).load_archive().unwrap();
+    assert_eq!(
+        archived[0].text, "two",
+        "selection tracked the grouped order across headers"
+    );
+
+    press(&mut app, KeyCode::Char('G'));
+    assert_eq!(app.task_group, TaskGroup::Category);
+    press(&mut app, KeyCode::Char('G'));
+    assert_eq!(app.task_group, TaskGroup::Off, "cycle wraps");
 }
 
 #[test]

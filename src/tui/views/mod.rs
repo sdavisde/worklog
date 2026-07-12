@@ -10,7 +10,9 @@ mod today;
 use crate::config::NotesPane;
 use crate::model::{Status, Task};
 use crate::theme::Theme;
-use crate::tui::app::{App, CategoryPicker, EditPurpose, Focus, Mode, Tab, ThemePicker};
+use crate::tui::app::{
+    App, CategoryPicker, EditPurpose, Focus, Mode, ProjectPicker, Tab, ThemePicker,
+};
 use crate::tui::textedit::{MAX_TEXT_ROWS, TextEdit};
 use chrono::NaiveDate;
 use ratatui::Frame;
@@ -91,6 +93,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
     match &app.mode {
         Mode::TextEdit(te) => render_textedit(app, te, frame, area),
         Mode::CategoryPicker(picker) => render_category_picker(picker, &app.theme, frame, area),
+        Mode::ProjectPicker(picker) => render_project_picker(picker, &app.theme, frame, area),
         Mode::ThemePicker(picker) => render_theme_picker(picker, &app.theme, frame, area),
         Mode::NotePicker { selected } => render_note_picker(app, *selected, frame, area),
         Mode::Confirm(state) => render_confirm(&state.prompt, &app.theme, frame, area),
@@ -214,7 +217,7 @@ fn status_marker(status: Status) -> &'static str {
 }
 
 /// Row for an active task: marker, text, `@category`, `#project`, due date
-/// (overdue in red).
+/// (overdue in red), and a dimmed relative age.
 pub(super) fn task_line(task: &Task, today: NaiveDate, theme: &Theme) -> Line<'static> {
     let mut spans = vec![
         Span::raw(status_marker(task.status)),
@@ -233,7 +236,24 @@ pub(super) fn task_line(task: &Task, today: NaiveDate, theme: &Theme) -> Line<'s
         };
         spans.push(Span::styled(format!("  due {due}"), style));
     }
+    let age = (today - task.created_at.date_naive()).num_days();
+    spans.push(Span::styled(
+        format!("  {}", format_age(age)),
+        dim_style(theme),
+    ));
     Line::from(spans)
+}
+
+/// Compact relative age of a task row: `0d`…`6d`, then `1w`…`4w`, `1mo`…,
+/// `1y`…. Negative day counts (task created "tomorrow" via clock skew) clamp
+/// to `0d`.
+pub(super) fn format_age(days: i64) -> String {
+    match days {
+        d if d < 7 => format!("{}d", d.max(0)),
+        d if d < 30 => format!("{}w", d / 7),
+        d if d < 365 => format!("{}mo", d / 30),
+        d => format!("{}y", d / 365),
+    }
 }
 
 /// Dimmed row for a completed task (Today view footer / Standup completions).
@@ -286,6 +306,7 @@ fn footer_hints(app: &App, width: u16) -> String {
         }
         Mode::TextEdit(_) => "enter save · esc cancel · ctrl+o editor".to_string(),
         Mode::CategoryPicker(_) => "j/k move · enter select · esc cancel".to_string(),
+        Mode::ProjectPicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::ThemePicker(_) => "j/k move · enter select · esc cancel".to_string(),
         Mode::NotePicker { .. } => "j/k move · enter open · esc cancel".to_string(),
         Mode::Confirm(_) => "confirm? enter/y = yes · n = no".to_string(),
@@ -305,10 +326,12 @@ fn footer_hints(app: &App, width: u16) -> String {
                     ],
                     Tab::Tasks => [
                         format!(
-                            "a add · space done · v view[{}] · / filter · c cat[{}] · p proj[{}] · ? keys · q quit",
+                            "a add · space done · v view[{}] · / filter · c cat[{}] · p proj[{}] · S sort[{}] · G grp[{}] · ? keys · q quit",
                             app.task_view.label(),
                             app.category_filter_label(),
-                            app.project_filter_label()
+                            app.project_filter_label(),
+                            app.task_sort.label(),
+                            app.task_group.label()
                         ),
                         format!(
                             "a add · v view[{}] · / filter · ? keys · q quit",
@@ -341,6 +364,7 @@ fn input_label(purpose: &EditPurpose) -> &'static str {
         EditPurpose::AddTask => "Add task (@category #project)",
         EditPurpose::EditTask { .. } => "Edit task",
         EditPurpose::DueDate { .. } => "Due date (YYYY-MM-DD, empty clears)",
+        EditPurpose::SetProject { .. } => "New project name",
         EditPurpose::Filter => "Filter",
         EditPurpose::NewNoteTitle => "New note title",
         EditPurpose::RenameNote { .. } => "Rename note",
@@ -419,6 +443,34 @@ fn render_category_picker(picker: &CategoryPicker, theme: &Theme, frame: &mut Fr
         .collect();
     let para = Paragraph::new(lines).block(block);
     frame.render_widget(para, rect);
+}
+
+/// The `P` project picker: "(no project)" to clear, every known project, and
+/// a final "new project…" row that opens the text-edit modal.
+fn render_project_picker(picker: &ProjectPicker, theme: &Theme, frame: &mut Frame, area: Rect) {
+    let rows: Vec<String> = std::iter::once("(no project)".to_string())
+        .chain(picker.projects.iter().map(|p| format!("#{p}")))
+        .chain(std::iter::once("new project…".to_string()))
+        .collect();
+    let height = (rows.len() as u16 + 2).min(area.height);
+    let rect = centered_rect(area, 40, height);
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Project (j/k move · enter select · esc cancel)")
+        .border_style(header_style(theme));
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            if i == picker.selected {
+                Line::from(Span::styled(format!("> {opt}"), selection_style(theme)))
+            } else {
+                Line::from(Span::raw(format!("  {opt}")))
+            }
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
 /// The `ctrl+t` theme picker: a closed list of theme names, one per row, the
@@ -506,12 +558,15 @@ fn render_help(theme: &Theme, frame: &mut Frame, area: Rect) {
             "Today & Tasks",
             &[
                 "a add · space/x done · b block · e edit",
-                "D due date · C category · d delete",
+                "D due date · C category · P project · d delete",
             ],
         ),
         (
             "Tasks only",
-            &["v view (open/done/all) · / filter · c category · p project"],
+            &[
+                "v view (open/done/all) · / filter · c category · p project",
+                "S sort (file/due/age/cat) · G group (off/project/category)",
+            ],
         ),
         (
             "Notes tab",
