@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/sdavisde/worklog/compare/v1.0.0...v1.1.0) (2026-07-12)
+
+
+### Features
+
+* **tui:** add project editing, age, sort, and grouping to tasks ([21723ea](https://github.com/sdavisde/worklog/commit/21723eac0145197eb4c7beb98334bc585474d6c3))
+
 ## [1.0.0](https://github.com/sdavisde/worklog/compare/v0.3.0...v1.0.0) (2026-07-10)
 
 
