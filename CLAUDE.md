@@ -2,6 +2,10 @@
 
 Guidance for Claude Code when working in this repository.
 
+Generic Rust discipline (error handling, layering, state design, testing, concurrency, subprocess hygiene, commit gates) is imported below and applies in full; the rest of this file is worklog-specific.
+
+@docs/rust-best-practices.md
+
 ## Commands
 
 - Build: `cargo build`
