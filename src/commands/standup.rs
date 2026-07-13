@@ -14,22 +14,37 @@ pub fn run() -> Result<()> {
 
 fn print_report(report: &StandupReport) {
     println!("{}", report.completed_label);
-    print_tasks(&report.completed);
+    print_tasks(&report.completed, "-");
     println!();
 
-    println!("Open");
-    print_tasks(&report.open);
+    // Today: what's already finished today (done marker) followed by what's
+    // still open.
+    println!("Today");
+    if report.completed_today.is_empty() && report.open.is_empty() {
+        println!("  (none)");
+    } else {
+        print_present_tasks(&report.completed_today, "x");
+        print_present_tasks(&report.open, "-");
+    }
     println!();
 
     println!("Blocked");
-    print_tasks(&report.blocked);
+    print_tasks(&report.blocked, "-");
 }
 
-fn print_tasks(tasks: &[Task]) {
+/// Print a group, emitting `(none)` when empty. `bullet` marks each row (`-`
+/// for pending, `x` for done).
+fn print_tasks(tasks: &[Task], bullet: &str) {
     if tasks.is_empty() {
         println!("  (none)");
         return;
     }
+    print_present_tasks(tasks, bullet);
+}
+
+/// Print the rows of a group without the empty-group `(none)` placeholder, so
+/// callers can merge several groups under one heading.
+fn print_present_tasks(tasks: &[Task], bullet: &str) {
     for task in tasks {
         let project = task
             .project
@@ -37,6 +52,6 @@ fn print_tasks(tasks: &[Task]) {
             .map(|p| format!(" #{p}"))
             .unwrap_or_default();
         let due = task.due.map(|d| format!(" (due {d})")).unwrap_or_default();
-        println!("  - [{}] {}{project}{due}", task.category, task.text);
+        println!("  {bullet} [{}] {}{project}{due}", task.category, task.text);
     }
 }

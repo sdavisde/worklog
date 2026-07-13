@@ -1,5 +1,7 @@
-//! Standup view: the shared [`crate::standup`] report — completed (yesterday,
-//! or most-recent fallback), open, and blocked — rendered as grouped lists.
+//! Standup view: the shared [`crate::standup`] report rendered as grouped
+//! lists — completed (yesterday, or most-recent fallback); Today, which mixes
+//! items finished today (dimmed done style) with what's still open; and
+//! blocked.
 
 use crate::model::Task;
 use crate::tui::app::App;
@@ -19,9 +21,20 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     )));
     push_group(&mut lines, &report.completed, true, app);
 
+    // Today: items finished today (dimmed done style) first, then still-open
+    // ones, under a single heading.
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Open", header_style(&app.theme))));
-    push_group(&mut lines, &report.open, false, app);
+    lines.push(Line::from(Span::styled("Today", header_style(&app.theme))));
+    if report.completed_today.is_empty() && report.open.is_empty() {
+        lines.push(Line::from(Span::styled("  (none)", dim_style(&app.theme))));
+    } else {
+        for task in &report.completed_today {
+            push_task(&mut lines, task, true, app);
+        }
+        for task in &report.open {
+            push_task(&mut lines, task, false, app);
+        }
+    }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -40,12 +53,16 @@ fn push_group(lines: &mut Vec<Line<'static>>, tasks: &[Task], completed: bool, a
         return;
     }
     for task in tasks {
-        let mut line = if completed {
-            completed_line(task, &app.theme)
-        } else {
-            task_line(task, app.today, &app.theme)
-        };
-        line.spans.insert(0, Span::raw("  "));
-        lines.push(line);
+        push_task(lines, task, completed, app);
     }
+}
+
+fn push_task(lines: &mut Vec<Line<'static>>, task: &Task, completed: bool, app: &App) {
+    let mut line = if completed {
+        completed_line(task, &app.theme)
+    } else {
+        task_line(task, app.today, &app.theme)
+    };
+    line.spans.insert(0, Span::raw("  "));
+    lines.push(line);
 }

@@ -161,11 +161,56 @@ fn standup_groups_open_blocked_and_completed_with_fallback_labeling() {
         "stdout: {stdout}"
     );
 
-    assert!(stdout.contains("Open"), "stdout: {stdout}");
+    assert!(stdout.contains("Today"), "stdout: {stdout}");
     assert!(stdout.contains("Open task item"), "stdout: {stdout}");
 
     assert!(stdout.contains("Blocked"), "stdout: {stdout}");
     assert!(stdout.contains("Blocked task item"), "stdout: {stdout}");
+}
+
+#[test]
+fn standup_shows_todays_completions_under_today_not_yesterday() {
+    let dir = tempdir().unwrap();
+
+    let now = Local::now().fixed_offset().to_rfc3339();
+    let tasks_jsonl = format!(
+        "{{\"id\":\"t_open001\",\"text\":\"Still open item\",\"category\":\"intake\",\"project\":null,\"status\":\"open\",\"due\":null,\"created_at\":\"{now}\",\"completed_at\":null}}\n"
+    );
+    fs::write(dir.path().join("tasks.jsonl"), tasks_jsonl).unwrap();
+
+    // One completion today and one yesterday: today's must land in "Today",
+    // yesterday's in the "Completed yesterday" section — never duplicated.
+    let yesterday = (Local::now() - Duration::days(1))
+        .fixed_offset()
+        .to_rfc3339();
+    let archive_jsonl = format!(
+        "{{\"id\":\"t_today001\",\"text\":\"Finished today item\",\"category\":\"engineering\",\"project\":null,\"status\":\"done\",\"due\":null,\"created_at\":\"{now}\",\"completed_at\":\"{now}\"}}\n\
+         {{\"id\":\"t_yest0001\",\"text\":\"Finished yesterday item\",\"category\":\"engineering\",\"project\":null,\"status\":\"done\",\"due\":null,\"created_at\":\"{yesterday}\",\"completed_at\":\"{yesterday}\"}}\n"
+    );
+    fs::write(dir.path().join("archive.jsonl"), archive_jsonl).unwrap();
+
+    let output = wl(dir.path()).arg("standup").output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // "Finished today item" appears exactly once, and after the "Today"
+    // heading rather than under "Completed yesterday".
+    let today_heading = stdout.find("Today").expect("Today heading present");
+    let yesterday_section = stdout
+        .find("Completed yesterday")
+        .expect("yesterday section");
+    let today_item = stdout
+        .find("Finished today item")
+        .expect("today completion");
+    let open_item = stdout.find("Still open item").expect("open item");
+    assert_eq!(stdout.matches("Finished today item").count(), 1, "no dup");
+    assert!(yesterday_section < today_heading, "sections ordered");
+    assert!(today_heading < today_item, "today completion under Today");
+    assert!(today_heading < open_item, "open item under Today");
+    assert!(
+        stdout.contains("Finished yesterday item"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -177,7 +222,7 @@ fn standup_with_no_data_prints_empty_sections() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("Completed yesterday"), "stdout: {stdout}");
-    assert!(stdout.contains("Open"), "stdout: {stdout}");
+    assert!(stdout.contains("Today"), "stdout: {stdout}");
     assert!(stdout.contains("Blocked"), "stdout: {stdout}");
     assert!(stdout.contains("(none)"), "stdout: {stdout}");
 }

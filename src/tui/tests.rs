@@ -131,15 +131,21 @@ fn standup_view_shows_three_groups() {
     store
         .append_archive(&archived_on("shipped yesterday", 1))
         .unwrap();
+    store
+        .append_archive(&archived_on("finished today", 0))
+        .unwrap();
 
     let mut app = app_in(dir.path());
     app.tab = Tab::Standup;
     let out = render(&app);
 
+    // Section 1: work completed before today (yesterday / most-recent).
     assert!(out.contains("Completed yesterday"));
     assert!(out.contains("shipped yesterday"));
-    assert!(out.contains("Open"));
+    // Section 2 "Today": today's completions mixed with still-open work.
+    assert!(out.contains("finished today"));
     assert!(out.contains("open work"));
+    // Section 3: blocked.
     assert!(out.contains("Blocked"));
     assert!(out.contains("blocked work"));
 }

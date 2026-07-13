@@ -6,12 +6,23 @@ use crate::store::Store;
 use chrono::{Local, NaiveDate};
 use color_eyre::eyre::Result;
 
-/// A built standup report: what was completed (with a label describing
-/// which day, since "yesterday" falls back to the most recent day with any
-/// completions), what's open, and what's blocked.
+/// A built standup report, in three sections:
+///
+/// - **Completed (yesterday / most-recent):** work finished since the last
+///   day with completions, *excluding today*. `completed_label` describes
+///   which day it is, since "yesterday" falls back to the most recent
+///   earlier day that has any completions.
+/// - **Today:** what's finished *today* (`completed_today`, pulled from the
+///   archive by completion date) plus what's still open (`open`).
+/// - **Blocked:** blocked tasks (`blocked`).
+///
+/// `completed` and `completed_today` are disjoint by construction: the
+/// "yesterday / most-recent" window only ever looks at days strictly before
+/// today, so a task finished today appears in `completed_today` alone.
 pub struct StandupReport {
     pub completed_label: String,
     pub completed: Vec<Task>,
+    pub completed_today: Vec<Task>,
     pub open: Vec<Task>,
     pub blocked: Vec<Task>,
 }
@@ -24,6 +35,7 @@ pub fn build_report(store: &Store) -> Result<StandupReport> {
 
     let today = Local::now().date_naive();
     let (completed_label, completed) = completions_for(&archive, today);
+    let completed_today = completions_on(&archive, today);
 
     let open = tasks
         .iter()
@@ -39,6 +51,7 @@ pub fn build_report(store: &Store) -> Result<StandupReport> {
     Ok(StandupReport {
         completed_label,
         completed,
+        completed_today,
         open,
         blocked,
     })
@@ -97,6 +110,13 @@ mod tests {
         task
     }
 
+    fn archived_on(text: &str, date: NaiveDate) -> Task {
+        let mut task = Task::new(text, "engineering", None, None);
+        task.status = Status::Done;
+        task.completed_at = Some(date.and_hms_opt(9, 0, 0).unwrap().and_utc().fixed_offset());
+        task
+    }
+
     #[test]
     fn uses_yesterday_when_present() {
         let today = Local::now().date_naive();
@@ -122,6 +142,65 @@ mod tests {
         let (label, completed) = completions_for(&[], today);
         assert_eq!(label, "Completed yesterday");
         assert!(completed.is_empty());
+    }
+
+    #[test]
+    fn todays_completions_excluded_from_yesterday_section() {
+        let today = Local::now().date_naive();
+        let archive = vec![archived("did today", 0), archived("did yesterday", 1)];
+
+        // The "yesterday / most-recent" section only sees strictly-earlier days.
+        let (label, completed) = completions_for(&archive, today);
+        assert_eq!(label, "Completed yesterday");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].text, "did yesterday");
+
+        // Today's completion is surfaced separately, so it can't duplicate.
+        let today_done = completions_on(&archive, today);
+        assert_eq!(today_done.len(), 1);
+        assert_eq!(today_done[0].text, "did today");
+    }
+
+    #[test]
+    fn monday_shows_friday_completions_and_todays_separately() {
+        let monday = NaiveDate::from_ymd_opt(2026, 7, 13).unwrap();
+        let friday = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+        let archive = vec![
+            archived_on("friday work", friday),
+            archived_on("monday work", monday),
+        ];
+
+        // Sunday (yesterday) has nothing, so the section falls back to Friday
+        // and never reaches forward into today's completions.
+        let (label, completed) = completions_for(&archive, monday);
+        assert!(label.contains("Friday"), "label was: {label}");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].text, "friday work");
+
+        let today_done = completions_on(&archive, monday);
+        assert_eq!(today_done.len(), 1);
+        assert_eq!(today_done[0].text, "monday work");
+    }
+
+    #[test]
+    fn build_report_splits_today_from_earlier_completions() {
+        let dir = tempdir().unwrap();
+        let store = Store::new(dir.path());
+
+        let mut open_task = Task::new("open one", "intake", None, None);
+        open_task.status = Status::Open;
+        store.save_tasks(&[open_task]).unwrap();
+        store.append_archive(&archived("done today", 0)).unwrap();
+        store
+            .append_archive(&archived("done yesterday", 1))
+            .unwrap();
+
+        let report = build_report(&store).unwrap();
+        assert_eq!(report.completed.len(), 1);
+        assert_eq!(report.completed[0].text, "done yesterday");
+        assert_eq!(report.completed_today.len(), 1);
+        assert_eq!(report.completed_today[0].text, "done today");
+        assert_eq!(report.open.len(), 1);
     }
 
     #[test]
