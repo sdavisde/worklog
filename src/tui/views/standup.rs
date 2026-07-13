@@ -9,7 +9,7 @@ use crate::tui::views::{completed_line, dim_style, header_style, pane_block, tas
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let report = &app.standup;
@@ -43,7 +43,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     )));
     push_group(&mut lines, &report.blocked, false, app);
 
-    let para = Paragraph::new(lines).block(pane_block("Standup", focused, &app.theme));
+    let para = Paragraph::new(lines)
+        .block(pane_block("Standup", focused, &app.theme))
+        .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
 }
 

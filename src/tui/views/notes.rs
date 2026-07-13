@@ -7,7 +7,7 @@ use crate::markdown::{Inline, parse_inline};
 use crate::theme::Theme;
 use crate::tui::app::{App, Focus, NoteRow, Tab};
 use crate::tui::views::{
-    dim_style, header_style, pane_block, selection_style, truncate_line, truncate_str,
+    dim_style, header_style, pane_block, selection_style, truncate_str, wrap_line, wrap_spans,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -35,7 +35,7 @@ pub fn render_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                     Span::raw(s.title.clone()),
                     Span::styled(format!("  ({count})"), dim_style(&app.theme)),
                 ]);
-                ListItem::new(truncate_line(line, row_width, &app.theme))
+                ListItem::new(Text::from(wrap_line(line, row_width, "    ")))
             })
             .collect()
     };
@@ -79,14 +79,14 @@ pub fn render_detail(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
         .note_rows()
         .into_iter()
         .map(|row| match row {
-            NoteRow::Heading { heading, .. } => ListItem::new(truncate_line(
+            NoteRow::Heading { heading, .. } => ListItem::new(Text::from(wrap_line(
                 Line::from(Span::styled(
                     format!("## {heading}"),
                     header_style(&app.theme),
                 )),
                 wrap_width,
-                &app.theme,
-            )),
+                "    ",
+            ))),
             NoteRow::Item { text, .. } => {
                 ListItem::new(Text::from(wrap_note_item(&text, wrap_width, &app.theme)))
             }
@@ -132,8 +132,7 @@ fn inline_run(inline: Inline, theme: &Theme) -> (String, Style) {
 /// Pre-wrap one item's text (with inline markdown styling) to `width` total
 /// columns: a dimmed `  - ` prefix on the first line, and continuations
 /// indented four spaces so they align under the item text, not the dash.
-/// Breaks at the last space that fits, or mid-word when a single word
-/// overflows the line.
+/// The break rules live in the shared [`wrap_spans`] helper.
 pub(in crate::tui) fn wrap_note_item(
     text: &str,
     width: usize,
@@ -141,66 +140,17 @@ pub(in crate::tui) fn wrap_note_item(
 ) -> Vec<Line<'static>> {
     const PREFIX: &str = "  - ";
     const INDENT: &str = "    ";
-    let text_width = width.saturating_sub(PREFIX.len()).max(1);
-
-    // Flatten the styled runs into one char stream tagged with its run index,
-    // so wrapping can cut anywhere without losing style boundaries.
-    let runs: Vec<(String, Style)> = parse_inline(text)
+    let spans: Vec<Span<'static>> = parse_inline(text)
         .into_iter()
-        .map(|i| inline_run(i, theme))
-        .collect();
-    let chars: Vec<(char, usize)> = runs
-        .iter()
-        .enumerate()
-        .flat_map(|(ri, (s, _))| s.chars().map(move |c| (c, ri)))
-        .collect();
-
-    let mut line_ranges: Vec<(usize, usize)> = Vec::new();
-    let mut start = 0;
-    loop {
-        if chars.len() - start <= text_width {
-            line_ranges.push((start, chars.len()));
-            break;
-        }
-        let window_end = start + text_width; // exclusive hard-break point
-        let break_at = (start + 1..=window_end)
-            .rev()
-            .find(|&i| chars[i - 1].0 != ' ' && chars.get(i).map(|c| c.0) == Some(' '));
-        match break_at {
-            Some(i) => {
-                line_ranges.push((start, i));
-                // skip the run of spaces the break landed on
-                let mut next = i;
-                while chars.get(next).map(|c| c.0) == Some(' ') {
-                    next += 1;
-                }
-                start = next;
-            }
-            None => {
-                line_ranges.push((start, window_end));
-                start = window_end;
-            }
-        }
-    }
-
-    line_ranges
-        .into_iter()
-        .enumerate()
-        .map(|(li, (s, e))| {
-            let lead = if li == 0 { PREFIX } else { INDENT };
-            let mut spans = vec![Span::styled(lead, dim_style(theme))];
-            let mut i = s;
-            while i < e {
-                let run = chars[i].1;
-                let mut j = i;
-                while j < e && chars[j].1 == run {
-                    j += 1;
-                }
-                let chunk: String = chars[i..j].iter().map(|c| c.0).collect();
-                spans.push(Span::styled(chunk, runs[run].1));
-                i = j;
-            }
-            Line::from(spans)
+        .map(|inline| {
+            let (content, style) = inline_run(inline, theme);
+            Span::styled(content, style)
         })
-        .collect()
+        .collect();
+    wrap_spans(
+        Line::from(spans),
+        width,
+        Span::styled(PREFIX, dim_style(theme)),
+        Span::styled(INDENT, dim_style(theme)),
+    )
 }

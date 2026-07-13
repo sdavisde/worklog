@@ -5,12 +5,12 @@
 use crate::model::Status;
 use crate::tui::app::{App, TaskGroup, TaskSort};
 use crate::tui::views::{
-    archived_task_line, header_style, pane_block, selection_style, task_line, truncate_line,
-    truncate_str,
+    archived_task_line, header_style, pane_block, selection_style, task_line, truncate_str,
+    wrap_line,
 };
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListItem, ListState};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
@@ -67,7 +67,9 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                 Status::Done => archived_task_line(t, &app.theme),
                 _ => task_line(t, app.today, &app.theme),
             };
-            items.push(ListItem::new(truncate_line(line, row_width, &app.theme)));
+            items.push(ListItem::new(Text::from(wrap_line(
+                line, row_width, "    ",
+            ))));
         }
         items
     };

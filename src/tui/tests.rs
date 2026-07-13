@@ -1598,6 +1598,49 @@ fn flat(line: &ratatui::text::Line<'_>) -> String {
 }
 
 #[test]
+fn wrap_line_returns_short_lines_unchanged() {
+    let lines = views::wrap_line(ratatui::text::Line::from("short"), 20, "    ");
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    assert_eq!(rendered, vec!["short"]);
+}
+
+#[test]
+fn wrap_line_breaks_at_spaces_and_indents_continuations() {
+    let lines = views::wrap_line(ratatui::text::Line::from("alpha beta gamma"), 10, "    ");
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    assert_eq!(rendered, vec!["alpha beta", "    gamma"]);
+}
+
+#[test]
+fn wrap_line_hard_breaks_overlong_words() {
+    let lines = views::wrap_line(ratatui::text::Line::from("abcdefghijkl"), 8, "  ");
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    assert_eq!(rendered, vec!["abcdefgh", "  ijkl"]);
+}
+
+#[test]
+fn wrap_line_preserves_styles_across_the_break() {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    let line = Line::from(vec![
+        Span::raw("plain text "),
+        Span::styled("styled tail", Style::default().add_modifier(Modifier::BOLD)),
+    ]);
+    let lines = views::wrap_line(line, 12, "    ");
+    let rendered: Vec<String> = lines.iter().map(flat).collect();
+    assert_eq!(rendered, vec!["plain text", "    styled", "    tail"]);
+    for (li, content) in [(1, "styled"), (2, "tail")] {
+        assert!(
+            lines[li]
+                .spans
+                .iter()
+                .any(|s| s.content == content && s.style.add_modifier.contains(Modifier::BOLD)),
+            "styled run keeps its style after the break"
+        );
+    }
+}
+
+#[test]
 fn wrap_note_item_breaks_at_spaces_and_indents_under_text() {
     let lines = views::notes::wrap_note_item("alpha beta gamma delta", 14, &Theme::default());
     let rendered: Vec<String> = lines.iter().map(flat).collect();
@@ -1740,7 +1783,7 @@ fn tasks_title_drops_filters_when_they_do_not_fit() {
 }
 
 #[test]
-fn overlong_task_rows_truncate_with_ellipsis() {
+fn overlong_task_rows_wrap_instead_of_truncating() {
     let dir = TempDir::new().unwrap();
     let store = Store::new(dir.path());
     let long_text = "alpha ".repeat(20);
@@ -1750,10 +1793,123 @@ fn overlong_task_rows_truncate_with_ellipsis() {
 
     let app = app_in(dir.path());
     let out = render_sized(&app, 60, 40);
-    assert!(out.contains("…"), "row ellipsis-truncated");
+    assert_eq!(
+        out.matches("alpha").count(),
+        20,
+        "full task text visible across wrapped lines"
+    );
     assert!(
-        !out.contains("@engineering"),
-        "clipped tail (category) is gone rather than wrapped"
+        out.contains("@engineering"),
+        "tail (category) wraps into view rather than clipping"
+    );
+    assert!(!out.contains("…"), "no ellipsis truncation");
+}
+
+#[test]
+fn wrapped_today_rows_keep_selection_on_the_right_task() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let long_text = "alpha ".repeat(20);
+    store
+        .save_tasks(&[
+            task(long_text.trim(), "engineering", Status::Open, None),
+            task("second short task", "support", Status::Open, None),
+        ])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    press(&mut app, KeyCode::Char('j'));
+    let out = render_sized(&app, 60, 40);
+    assert!(
+        out.contains("> [ ] second short task"),
+        "highlight lands on the task after the wrapped one: {out}"
+    );
+    assert!(
+        !out.contains("> [ ] alpha"),
+        "the unselected wrapped task carries no highlight symbol"
+    );
+}
+
+#[test]
+fn tasks_view_wraps_overlong_rows() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let long_text = "alpha ".repeat(20);
+    store
+        .save_tasks(&[task(long_text.trim(), "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Tasks;
+    let out = render_sized(&app, 60, 40);
+    assert_eq!(
+        out.matches("alpha").count(),
+        20,
+        "full task text visible across wrapped lines"
+    );
+    assert!(out.contains("@engineering"), "category wraps into view");
+}
+
+#[test]
+fn standup_view_wraps_overlong_rows() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let long_text = "alpha ".repeat(20);
+    store
+        .save_tasks(&[task(long_text.trim(), "engineering", Status::Open, None)])
+        .unwrap();
+
+    let mut app = app_in(dir.path());
+    app.tab = Tab::Standup;
+    let out = render_sized(&app, 60, 40);
+    assert_eq!(
+        out.matches("alpha").count(),
+        20,
+        "full task text visible across wrapped lines"
+    );
+    assert!(out.contains("@engineering"), "category wraps into view");
+}
+
+#[test]
+fn today_completions_footer_wraps_long_rows() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    let long_text = "omega ".repeat(20);
+    store
+        .append_archive(&archived_on(long_text.trim(), 0))
+        .unwrap();
+
+    let app = app_in(dir.path());
+    let out = render_sized(&app, 60, 40);
+    assert!(out.contains("Completed today"), "footer header present");
+    assert_eq!(
+        out.matches("omega").count(),
+        20,
+        "full completion text visible across wrapped lines"
+    );
+}
+
+#[test]
+fn today_completions_footer_never_starves_the_active_list() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::new(dir.path());
+    store
+        .save_tasks(&[task("short open task", "engineering", Status::Open, None)])
+        .unwrap();
+    let long_text = "omega ".repeat(20);
+    for _ in 0..6 {
+        store
+            .append_archive(&archived_on(long_text.trim(), 0))
+            .unwrap();
+    }
+
+    let app = app_in(dir.path());
+    let out = render_sized(&app, 60, 40);
+    assert!(out.contains("Completed today"), "footer header present");
+    assert!(out.contains("omega"), "wrapped completions render");
+    assert!(
+        out.contains("short open task"),
+        "the active list keeps its space above a tall footer"
     );
 }
 

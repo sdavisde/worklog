@@ -3,11 +3,11 @@
 
 use crate::tui::app::App;
 use crate::tui::views::{
-    completed_line, header_style, pane_block, selection_style, task_line, truncate_line,
+    completed_line, header_style, pane_block, selection_style, task_line, wrap_line,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
@@ -15,11 +15,26 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     let completions = app.today_completions();
     let inner = area.width.saturating_sub(2) as usize;
     let row_width = inner.saturating_sub(2).max(8); // room for the "> " shift
-    let comp_height = if completions.is_empty() {
-        0
+
+    // Completions are pre-wrapped so the footer height is exact; it is then
+    // capped at half the pane so the active list above keeps its space.
+    let comp_lines: Vec<Line> = if completions.is_empty() {
+        Vec::new()
     } else {
-        completions.len() as u16 + 1
+        let mut lines = vec![Line::from(Span::styled(
+            "Completed today",
+            header_style(&app.theme),
+        ))];
+        for t in &completions {
+            lines.extend(wrap_line(
+                completed_line(t, &app.theme),
+                (area.width as usize).max(1),
+                "    ",
+            ));
+        }
+        lines
     };
+    let comp_height = (comp_lines.len() as u16).min(area.height / 2);
 
     let [top, bottom] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(comp_height)]).areas(area);
@@ -30,11 +45,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
         active
             .iter()
             .map(|t| {
-                ListItem::new(truncate_line(
+                ListItem::new(Text::from(wrap_line(
                     task_line(t, app.today, &app.theme),
                     row_width,
-                    &app.theme,
-                ))
+                    "    ",
+                )))
             })
             .collect()
     };
@@ -50,16 +65,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
     }
     frame.render_stateful_widget(list, top, &mut state);
 
-    if !completions.is_empty() {
-        let mut lines = vec![Line::from(Span::styled(
-            "Completed today",
-            header_style(&app.theme),
-        ))];
-        lines.extend(
-            completions
-                .iter()
-                .map(|t| truncate_line(completed_line(t, &app.theme), inner, &app.theme)),
-        );
-        frame.render_widget(Paragraph::new(lines), bottom);
+    if !comp_lines.is_empty() {
+        frame.render_widget(Paragraph::new(comp_lines), bottom);
     }
 }

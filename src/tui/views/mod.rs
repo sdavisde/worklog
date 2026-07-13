@@ -194,6 +194,106 @@ pub(super) fn truncate_str(s: &str, width: usize) -> String {
     out
 }
 
+/// Wrap a styled line to `width` columns (chars ≈ columns, as in
+/// [`truncate_line`]), breaking at the last space that fits or mid-word when
+/// a single word overflows. `first_prefix` leads the first line and
+/// `cont_prefix` each continuation; both count against the width.
+fn wrap_spans(
+    line: Line<'static>,
+    width: usize,
+    first_prefix: Span<'static>,
+    cont_prefix: Span<'static>,
+) -> Vec<Line<'static>> {
+    let first_width = width
+        .saturating_sub(first_prefix.content.chars().count())
+        .max(1);
+    let cont_width = width
+        .saturating_sub(cont_prefix.content.chars().count())
+        .max(1);
+
+    // Flatten the styled spans into one char stream tagged with its span
+    // index, so wrapping can cut anywhere without losing style boundaries.
+    let chars: Vec<(char, usize)> = line
+        .spans
+        .iter()
+        .enumerate()
+        .flat_map(|(si, s)| s.content.chars().map(move |c| (c, si)))
+        .collect();
+
+    let mut line_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0;
+    loop {
+        let text_width = if line_ranges.is_empty() {
+            first_width
+        } else {
+            cont_width
+        };
+        if chars.len() - start <= text_width {
+            line_ranges.push((start, chars.len()));
+            break;
+        }
+        let window_end = start + text_width; // exclusive hard-break point
+        let break_at = (start + 1..=window_end)
+            .rev()
+            .find(|&i| chars[i - 1].0 != ' ' && chars.get(i).map(|c| c.0) == Some(' '));
+        match break_at {
+            Some(i) => {
+                line_ranges.push((start, i));
+                // skip the run of spaces the break landed on
+                let mut next = i;
+                while chars.get(next).map(|c| c.0) == Some(' ') {
+                    next += 1;
+                }
+                start = next;
+            }
+            None => {
+                line_ranges.push((start, window_end));
+                start = window_end;
+            }
+        }
+    }
+
+    line_ranges
+        .into_iter()
+        .enumerate()
+        .map(|(li, (s, e))| {
+            let lead = if li == 0 {
+                first_prefix.clone()
+            } else {
+                cont_prefix.clone()
+            };
+            let mut spans = Vec::new();
+            if !lead.content.is_empty() {
+                spans.push(lead);
+            }
+            let mut i = s;
+            while i < e {
+                let span_idx = chars[i].1;
+                let mut j = i;
+                while j < e && chars[j].1 == span_idx {
+                    j += 1;
+                }
+                let chunk: String = chars[i..j].iter().map(|c| c.0).collect();
+                spans.push(Span::styled(chunk, line.spans[span_idx].style));
+                i = j;
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Wrap a styled row to `width` columns instead of truncating: the first
+/// line keeps the full width, continuations get an unstyled
+/// `continuation_indent` (four spaces at call sites, aligning under the text
+/// after the `[ ] ` marker).
+pub(super) fn wrap_line(
+    line: Line<'static>,
+    width: usize,
+    continuation_indent: &'static str,
+) -> Vec<Line<'static>> {
+    wrap_spans(line, width, Span::raw(""), Span::raw(continuation_indent))
+}
+
 /// Bordered pane block: the focused pane gets the highlighted border.
 pub(super) fn pane_block(
     title: impl Into<Line<'static>>,
