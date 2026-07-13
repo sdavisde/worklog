@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/sdavisde/worklog/compare/v1.1.0...v1.2.0) (2026-07-13)
+
+
+### Features
+
+* **standup:** merge today's completions into a unified section ([4250f3c](https://github.com/sdavisde/worklog/commit/4250f3c64b32b63d012e06836e8dc52f007df971))
+
 ## [1.1.0](https://github.com/sdavisde/worklog/compare/v1.0.0...v1.1.0) (2026-07-12)
 
 
