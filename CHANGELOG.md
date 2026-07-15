@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/sdavisde/worklog/compare/v1.2.0...v1.3.0) (2026-07-13)
+
+
+### Features
+
+* support wrapping task lines ([fe3b7ac](https://github.com/sdavisde/worklog/commit/fe3b7ac9ef8685cb2e4bc59b72031d2a89ccadb8))
+
 ## [1.2.0](https://github.com/sdavisde/worklog/compare/v1.1.0...v1.2.0) (2026-07-13)
 
 
